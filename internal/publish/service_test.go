@@ -2,6 +2,8 @@ package publish
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"encoding/json"
 	"testing"
 
@@ -273,5 +275,39 @@ func TestPublishRestoresDraftWhenSnapshotCommitFails(t *testing.T) {
 	}
 	if recovered.Status != domain.RevisionDraft {
 		t.Fatalf("failed publish stranded revision in %s, want DRAFT", recovered.Status)
+	}
+}
+
+func TestRevokedSnapshotCommitRestoresDraftWithoutPublishing(t *testing.T) {
+	ctx := context.Background()
+	h, err := db.Open(ctx, db.Config{DataRoot: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close()
+	st := store.New(h.DB, clock.Real{})
+	project, revision, err := st.CreateProject(ctx, store.CreateProjectParams{Name: "Snapshot authority"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	checks := 0
+	guard := capability.WithWriteAuthorization(ctx, func(context.Context, *sql.Tx) error {
+		checks++
+		if checks == 1 {
+			return nil
+		}
+		return capability.ErrDispatchAuthorityRevoked
+	})
+	_, report, err := New(st, capability.NewRegistry()).Publish(guard, project.ID, revision.ID, "owner")
+	if !report.Valid || checks != 2 || !errors.Is(err, capability.ErrDispatchAuthorityRevoked) {
+		t.Fatalf("publish guard checks=%d valid=%t err=%v", checks, report.Valid, err)
+	}
+	after, err := st.GetRevision(ctx, revision.ID)
+	if err != nil || after.Status != domain.RevisionDraft {
+		t.Fatalf("revoked publish did not restore draft: %+v, %v", after, err)
+	}
+	var count int
+	if err := h.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM runtime_snapshots WHERE project_id = ?", project.ID).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("revoked publish committed %d snapshots: %v", count, err)
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/domain"
 	stageid "github.com/ali96adil/StageCore/internal/id"
@@ -46,7 +47,7 @@ func (s *Store) CreateNote(ctx context.Context, projectID string, p CreateNotePa
 		return domain.Note{}, err
 	}
 	now := s.clock.Now().UTC()
-	_, err = s.db.ExecContext(ctx, `
+	_, err = capability.ExecAuthorized(ctx, s.db, `
 		INSERT INTO operator_notes (
 			note_id, project_id, session_id, cue_id, category, body, status,
 			created_by, created_at_us, updated_at_us, resolved_at_us
@@ -118,7 +119,7 @@ func (s *Store) UpdateNote(ctx context.Context, projectID, noteID, body, categor
 	if body == "" {
 		return domain.Note{}, fmt.Errorf("%w: note body is required", domain.ErrInvalidInput)
 	}
-	result, err := s.db.ExecContext(ctx, `
+	result, err := capability.ExecAuthorized(ctx, s.db, `
 		UPDATE operator_notes SET body = ?, category = ?, updated_at_us = ?
 		WHERE project_id = ? AND note_id = ?`, body, strings.TrimSpace(category), clock.UnixMicros(s.clock.Now()), strings.TrimSpace(projectID), strings.TrimSpace(noteID))
 	if err != nil {
@@ -142,7 +143,7 @@ func (s *Store) SetNoteStatus(ctx context.Context, projectID, noteID string, sta
 	if status == domain.NoteResolved {
 		resolved = clock.UnixMicros(now)
 	}
-	result, err := s.db.ExecContext(ctx, `
+	result, err := capability.ExecAuthorized(ctx, s.db, `
 		UPDATE operator_notes
 		SET status = ?, resolved_at_us = ?, updated_at_us = ?
 		WHERE project_id = ? AND note_id = ?`, status, resolved, clock.UnixMicros(now), strings.TrimSpace(projectID), strings.TrimSpace(noteID))

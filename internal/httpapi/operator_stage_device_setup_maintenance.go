@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/devicechannel"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
 	stageid "github.com/ali96adil/StageCore/internal/id"
@@ -17,12 +18,28 @@ import (
 
 const setupAPMaintenanceTimeout = 7 * time.Second
 
+type setupAPMaintenanceHooks struct {
+	Configure      func(context.Context, string, string, string, string) (devicechannel.SetupAPPasswordResult, error)
+	BeforeResponse func()
+}
+
 func WithOperatorStageDeviceSetupMaintenance(
 	auth *userauth.Service,
 	devices *deviceexperience.Repository,
 	runtime *devicechannel.Runtime,
 	stageStore *store.Store,
 	audit *securityaudit.Service,
+) Option {
+	return withOperatorStageDeviceSetupMaintenance(auth, devices, runtime, stageStore, audit, setupAPMaintenanceHooks{})
+}
+
+func withOperatorStageDeviceSetupMaintenance(
+	auth *userauth.Service,
+	devices *deviceexperience.Repository,
+	runtime *devicechannel.Runtime,
+	stageStore *store.Store,
+	audit *securityaudit.Service,
+	hooks setupAPMaintenanceHooks,
 ) Option {
 	return func(s *Server) {
 		if s == nil || s.mux == nil || auth == nil || devices == nil ||
@@ -37,6 +54,7 @@ func WithOperatorStageDeviceSetupMaintenance(
 				r *http.Request,
 				session userauth.Session,
 			) {
+				w.Header().Set("Cache-Control", "no-store")
 				deviceID := strings.TrimSpace(r.PathValue("device_id"))
 				var input struct {
 					Password       string `json:"password"`
@@ -52,7 +70,7 @@ func WithOperatorStageDeviceSetupMaintenance(
 					if password != "" {
 						writeJSON(w, http.StatusBadRequest, map[string]any{
 							"error_code": "STAGE_DEVICE_SETUP_AP_INPUT_INVALID",
-							"detail": "reset_to_default cannot include a password",
+							"detail":     "reset_to_default cannot include a password",
 						})
 						return
 					}
@@ -60,7 +78,7 @@ func WithOperatorStageDeviceSetupMaintenance(
 				} else if len(password) < 8 || len(password) > 63 {
 					writeJSON(w, http.StatusBadRequest, map[string]any{
 						"error_code": "STAGE_DEVICE_SETUP_AP_PASSWORD_INVALID",
-						"detail": "Setup AP password must be 8-63 bytes",
+						"detail":     "Setup AP password must be 8-63 bytes",
 					})
 					return
 				}
@@ -74,9 +92,9 @@ func WithOperatorStageDeviceSetupMaintenance(
 				}
 				if active != "" {
 					writeJSON(w, http.StatusConflict, map[string]any{
-						"error_code": "STAGE_DEVICE_SETUP_AP_SESSION_ACTIVE",
+						"error_code":   "STAGE_DEVICE_SETUP_AP_SESSION_ACTIVE",
 						"session_type": active,
-						"detail": "Device maintenance is unavailable while an operational Session is active.",
+						"detail":       "Device maintenance is unavailable while an operational Session is active.",
 					})
 					return
 				}
@@ -113,13 +131,46 @@ func WithOperatorStageDeviceSetupMaintenance(
 
 				ctx, cancel := context.WithTimeout(r.Context(), setupAPMaintenanceTimeout)
 				defer cancel()
-				result, err := runtime.ConfigureSetupAPPassword(
-					ctx, device.ID, requestID, operation, password,
-				)
+				token, _ := browserSessionToken(r)
+				csrf := r.Header.Get(csrfHeader)
+				ownerOnly := qualificationAccess(r, nil) != nil
+				dispatch := capability.WithDispatchCheck(ctx, func(ctx context.Context) error {
+					current, err := auth.ValidateCSRF(ctx, token, csrf)
+					if err != nil || current.ID != session.ID || current.User.ID != session.User.ID ||
+						userauth.Authorize(current.User.Role, userauth.PermissionDeviceMaintenanceManage) != nil ||
+						(ownerOnly && current.User.Role != userauth.RoleOwner) {
+						return capability.ErrDispatchAuthorityRevoked
+					}
+					active, err := stageStore.ActiveOperationalSessionType(ctx)
+					if err != nil || active != "" {
+						return capability.ErrDispatchAuthorityRevoked
+					}
+					return nil
+				})
+				configure := runtime.ConfigureSetupAPPassword
+				if hooks.Configure != nil {
+					configure = hooks.Configure
+				}
+				result, err := configure(dispatch, device.ID, requestID, operation, password)
+				if hooks.BeforeResponse != nil {
+					hooks.BeforeResponse()
+				}
 				if err != nil {
+					if authorityErr := capability.CheckDispatch(dispatch); authorityErr != nil {
+						failure := map[string]any{"error_code": capability.DispatchAuthorityRevokedCode}
+						if errors.Is(err, devicechannel.ErrSetupAPMaintenanceOutcomeUncertain) {
+							failure["effect_may_be_committed"] = true
+							failure["effect_may_have_been_committed"] = true
+							failure["retryable"] = false
+						}
+						writeJSON(w, http.StatusForbidden, failure)
+						return
+					}
 					status := http.StatusConflict
 					code := "STAGE_DEVICE_SETUP_AP_REJECTED"
 					switch {
+					case errors.Is(err, capability.ErrDispatchAuthorityRevoked):
+						status, code = http.StatusForbidden, capability.DispatchAuthorityRevokedCode
 					case errors.Is(err, devicechannel.ErrSetupAPMaintenanceOffline):
 						code = "STAGE_DEVICE_SETUP_AP_DEVICE_OFFLINE"
 					case errors.Is(err, devicechannel.ErrSetupAPMaintenanceProtocol):
@@ -133,34 +184,48 @@ func WithOperatorStageDeviceSetupMaintenance(
 						status = http.StatusGatewayTimeout
 						code = "STAGE_DEVICE_SETUP_AP_ACK_TIMEOUT"
 					}
-					writeJSON(w, status, map[string]any{
+					failure := map[string]any{
 						"error_code": code,
-						"detail": err.Error(),
-					})
+						"detail":     err.Error(),
+					}
+					if errors.Is(err, devicechannel.ErrSetupAPMaintenanceOutcomeUncertain) {
+						failure["effect_may_be_committed"] = true
+						failure["effect_may_have_been_committed"] = true
+						failure["retryable"] = false
+					}
+					writeJSON(w, status, failure)
 					return
 				}
 
 				appendAudit(r, audit, securityaudit.Event{
-					EventType: "stage_device.setup_ap_password.updated",
-					ActorUserID: session.User.ID,
+					EventType:     "stage_device.setup_ap_password.updated",
+					ActorUserID:   session.User.ID,
 					ActorUsername: session.User.Username,
-					ResourceType: "stage_device",
-					ResourceID: device.ID,
-					Result: securityaudit.ResultSuccess,
+					ResourceType:  "stage_device",
+					ResourceID:    device.ID,
+					Result:        securityaudit.ResultSuccess,
 					Metadata: map[string]any{
-						"device_id": device.ID,
-						"operation": operation,
-						"request_id": requestID,
+						"device_id":             device.ID,
+						"operation":             operation,
+						"request_id":            requestID,
 						"connection_generation": result.ConnectionGeneration,
 					},
 				})
-
+				if err := capability.CheckDispatch(dispatch); err != nil {
+					writeJSON(w, http.StatusForbidden, map[string]any{
+						"error_code":                     capability.DispatchAuthorityRevokedCode,
+						"effect_may_be_committed":        true,
+						"effect_may_have_been_committed": true,
+						"retryable":                      false,
+					})
+					return
+				}
 				writeJSON(w, http.StatusOK, map[string]any{
-					"device_id": device.ID,
-					"request_id": requestID,
-					"operation": operation,
+					"device_id":         device.ID,
+					"request_id":        requestID,
+					"operation":         operation,
 					"maintenance_state": result.MaintenanceState,
-					"detail": result.Detail,
+					"detail":            result.Detail,
 				})
 			}),
 		)

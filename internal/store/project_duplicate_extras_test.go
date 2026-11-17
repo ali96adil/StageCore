@@ -40,7 +40,7 @@ func TestDuplicateProjectAuthoringProjectWideSettingsAndMedia(t *testing.T) {
     exec(`INSERT INTO media_locations
         (media_location_id,content_version_id,location_type,locator,status)
         VALUES ('00000000-0000-7000-8000-000000000304',?,'HUB','vault/a','AVAILABLE')`,versionID)
-    actionParams := `{"media_asset_id":"`+assetID+`","nested":{"content_version_id":"`+versionID+`","live_source_id":"`+liveSourceID+`","machine_role_id":"`+roleID+`"},"filename":"ambient.mp4"}`
+    actionParams := `{"media_asset_id":"`+assetID+`","nested":{"content_version_id":"`+versionID+`","live_source_id":"`+liveSourceID+`","machine_role_id":"`+roleID+`"},"filename":"`+assetID+`","literal_version_name":"`+versionID+`","original_filename":"ambient.mp4"}`
     exec(`INSERT INTO actions
         (action_id,cue_id,order_index,execution_mode,target_ref,capability_key,
          parameters_json,timeout_policy_json,error_policy_json,priority_class,enabled)
@@ -85,10 +85,14 @@ func TestDuplicateProjectAuthoringProjectWideSettingsAndMedia(t *testing.T) {
         t.Fatalf("expected cloned media Cue action, got %+v",copiedCues)
     }
     copiedParams:=string(copiedCues[0].Actions[0].Parameters)
-    if !strings.Contains(copiedParams,newAsset) || !strings.Contains(copiedParams,newVersion) ||
-       strings.Contains(copiedParams,assetID) || strings.Contains(copiedParams,versionID) ||
+    if !strings.Contains(copiedParams, `"media_asset_id":"`+newAsset+`"`) ||
+       strings.Contains(copiedParams, `"media_asset_id":"`+assetID+`"`) ||
+       !strings.Contains(copiedParams, `"content_version_id":"`+newVersion+`"`) ||
+       strings.Contains(copiedParams, `"content_version_id":"`+versionID+`"`) ||
+       !strings.Contains(copiedParams, `"filename":"`+assetID+`"`) ||
+       !strings.Contains(copiedParams, `"literal_version_name":"`+versionID+`"`) ||
        !strings.Contains(copiedParams,"ambient.mp4") {
-        t.Fatalf("media IDs in cloned Cue action were not remapped: %s",copiedParams)
+        t.Fatalf("media references were not remapped without changing literal values: %s",copiedParams)
     }
     var matchingRequirements int
     if err:=h.DB.QueryRowContext(ctx,`SELECT COUNT(*) FROM machine_role_media_requirements

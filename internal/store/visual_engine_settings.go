@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/visualengine"
@@ -58,15 +59,24 @@ func (s *Store) SetVisualEngineMode(ctx context.Context, revisionID string, mode
 		return fmt.Errorf("%w: Visual Engine mode requires a DRAFT revision", domain.ErrConflict)
 	}
 	nowUS := clock.UnixMicros(s.clock.Now().UTC())
-	if _, err := s.db.ExecContext(ctx, `
+	result, err := capability.ExecAuthorized(ctx, s.db, `
 		INSERT INTO visual_engine_revision_settings (revision_id, engine_mode, updated_by, updated_at_us)
-		VALUES (?, ?, ?, ?)
+		SELECT revision_id, ?, ?, ? FROM project_revisions
+		WHERE revision_id = ? AND status = 'DRAFT'
 		ON CONFLICT(revision_id) DO UPDATE SET
 			engine_mode = excluded.engine_mode,
 			updated_by = excluded.updated_by,
 			updated_at_us = excluded.updated_at_us
-	`, revisionID, string(mode), updatedBy, nowUS); err != nil {
+	`, string(mode), updatedBy, nowUS, revisionID)
+	if err != nil {
 		return fmt.Errorf("persist Visual Engine mode: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if changed == 0 {
+		return fmt.Errorf("%w: Visual Engine mode requires a DRAFT revision", domain.ErrConflict)
 	}
 	return nil
 }

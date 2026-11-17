@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
 	stageid "github.com/ali96adil/StageCore/internal/id"
 	"github.com/ali96adil/StageCore/internal/stagelaser"
@@ -79,9 +80,9 @@ func (r *Runtime) ExecuteStageLaserAssignmentAuthorized(
 	}
 	r.assignmentTransitions[input.DeviceID] = true
 	pending := &pendingStageLaserAssignment{
-		connection: current,
+		connection:   current,
 		assignmentID: assignmentID,
-		ack: make(chan inboundMessage, 1),
+		ack:          make(chan inboundMessage, 1),
 	}
 	r.pendingStageLaserAssignments[input.DeviceID] = pending
 	r.mu.Unlock()
@@ -103,21 +104,23 @@ func (r *Runtime) ExecuteStageLaserAssignmentAuthorized(
 			return deviceexperience.StageLaserAssignmentCommit{}, fmt.Errorf("%w: operator authorization changed: %v", ErrStageLaserAssignmentNotVerified, err)
 		}
 	}
-	if err := current.send(map[string]any{
-		"type": "stagelaser.assignment.prepare",
-		"schema_version": 2,
-		"device_id": input.DeviceID,
-		"assignment_id": assignmentID,
-		"assignment_epoch": input.ExpectedEpoch,
-		"connection_generation": generation,
-		"challenge": challenge,
-		"target_project_id": strings.TrimSpace(input.TargetProjectID),
+	if err := current.sendAuthorized(ctx, map[string]any{
+		"type":                       "stagelaser.assignment.prepare",
+		"schema_version":             2,
+		"device_id":                  input.DeviceID,
+		"assignment_id":              assignmentID,
+		"assignment_epoch":           input.ExpectedEpoch,
+		"connection_generation":      generation,
+		"challenge":                  challenge,
+		"target_project_id":          strings.TrimSpace(input.TargetProjectID),
 		"target_runtime_snapshot_id": strings.TrimSpace(input.TargetRuntimeSnapshotID),
-		"safe_off_required": true,
-		"required_arm_state": string(stagelaser.ArmDisarmed),
-		"required_logical_state": string(stagelaser.StateOff),
+		"safe_off_required":          true,
+		"required_arm_state":         string(stagelaser.ArmDisarmed),
+		"required_logical_state":     string(stagelaser.StateOff),
 	}); err != nil {
-		current.close()
+		if ctx.Err() == nil && !errors.Is(err, capability.ErrDispatchAuthorityRevoked) {
+			current.close()
+		}
 		return deviceexperience.StageLaserAssignmentCommit{}, fmt.Errorf("%w: safe-off request failed: %v", ErrStageLaserAssignmentNotVerified, err)
 	}
 
@@ -168,21 +171,21 @@ func (r *Runtime) ExecuteStageLaserAssignmentAuthorized(
 		return deviceexperience.StageLaserAssignmentCommit{}, ErrStageLaserAssignmentNotVerified
 	}
 	record, err := r.repository.CommitStageLaserSafeAssignment(ctx, deviceexperience.VerifiedStageLaserAssignmentInput{
-		AssignmentID: assignmentID,
-		DeviceID: input.DeviceID,
-		ExpectedProjectID: input.ExpectedProjectID,
+		AssignmentID:              assignmentID,
+		DeviceID:                  input.DeviceID,
+		ExpectedProjectID:         input.ExpectedProjectID,
 		ExpectedRuntimeSnapshotID: input.ExpectedRuntimeSnapshotID,
-		TargetProjectID: input.TargetProjectID,
-		TargetRuntimeSnapshotID: input.TargetRuntimeSnapshotID,
-		ExpectedEpoch: input.ExpectedEpoch,
-		ConnectionGeneration: generation,
-		Challenge: challenge,
-		AckDeviceID: ack.DeviceID,
-		AckEpoch: ack.AssignmentEpoch,
-		AckGeneration: ack.ConnectionGeneration,
-		AckChallenge: ack.Challenge,
-		AckObservation: observation,
-		ActorID: actorID,
+		TargetProjectID:           input.TargetProjectID,
+		TargetRuntimeSnapshotID:   input.TargetRuntimeSnapshotID,
+		ExpectedEpoch:             input.ExpectedEpoch,
+		ConnectionGeneration:      generation,
+		Challenge:                 challenge,
+		AckDeviceID:               ack.DeviceID,
+		AckEpoch:                  ack.AssignmentEpoch,
+		AckGeneration:             ack.ConnectionGeneration,
+		AckChallenge:              ack.Challenge,
+		AckObservation:            observation,
+		ActorID:                   actorID,
 	})
 	if err == nil {
 		current.close()
@@ -258,11 +261,11 @@ func (r *Runtime) activateStageLaserScope(
 		return false
 	}
 	if _, err := r.repository.ObserveAuthorizedV2StageLaser(ctx, deviceexperience.RuntimeObservation{
-		DeviceID: current.deviceID,
-		Connection: deviceexperience.ConnectionOnline,
-		Readiness: readiness,
+		DeviceID:      current.deviceID,
+		Connection:    deviceexperience.ConnectionOnline,
+		Readiness:     readiness,
 		ObservedState: message.ObservedState,
-		NetworkState: message.NetworkState,
+		NetworkState:  message.NetworkState,
 	}, message.ProjectID, message.RuntimeSnapshotID, message.AssignmentEpoch); err != nil {
 		return false
 	}
@@ -271,6 +274,8 @@ func (r *Runtime) activateStageLaserScope(
 	same := !r.closed &&
 		r.connections[current.deviceID] == current &&
 		!r.assignmentTransitions[current.deviceID]
+	connectedAt := time.Now().UTC()
+	previousTelemetryProjectID := ""
 	if same {
 		select {
 		case <-current.closed:
@@ -279,25 +284,35 @@ func (r *Runtime) activateStageLaserScope(
 		}
 	}
 	if same {
+		previousTelemetryProjectID = current.telemetryProjectID
 		current.activeProjectID = strings.TrimSpace(message.ProjectID)
 		current.activeRuntimeSnapshotID = strings.TrimSpace(message.RuntimeSnapshotID)
 		current.activeAssignmentEpoch = message.AssignmentEpoch
+		current.telemetryProjectID = strings.TrimSpace(message.ProjectID)
 		current.commandsEnabled = true
 	}
 	r.mu.Unlock()
 	if !same {
 		return false
 	}
+	if previousTelemetryProjectID != strings.TrimSpace(message.ProjectID) {
+		if previousTelemetryProjectID != "" {
+			_ = r.repository.RecordTransportTransition(ctx, previousTelemetryProjectID, current.deviceID, false,
+				current.generation, deviceexperience.TransportDisconnectProjectScopeChanged, connectedAt)
+		}
+		_ = r.repository.RecordTransportTransition(ctx, message.ProjectID, current.deviceID, true,
+			current.generation, "", connectedAt)
+	}
 	if err := current.send(map[string]any{
-		"type": "runtime.ready",
-		"schema_version": 2,
-		"device_id": current.deviceID,
-		"protocol_version": deviceexperience.ProtocolVersion2,
-		"project_id": message.ProjectID,
-		"runtime_snapshot_id": message.RuntimeSnapshotID,
-		"assignment_epoch": message.AssignmentEpoch,
+		"type":                  "runtime.ready",
+		"schema_version":        2,
+		"device_id":             current.deviceID,
+		"protocol_version":      deviceexperience.ProtocolVersion2,
+		"project_id":            message.ProjectID,
+		"runtime_snapshot_id":   message.RuntimeSnapshotID,
+		"assignment_epoch":      message.AssignmentEpoch,
 		"connection_generation": current.generation,
-		"commands_enabled": true,
+		"commands_enabled":      true,
 	}); err != nil {
 		current.close()
 		return false

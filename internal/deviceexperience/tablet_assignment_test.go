@@ -2,11 +2,13 @@ package deviceexperience_test
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
 	"github.com/ali96adil/StageCore/internal/store"
@@ -84,7 +86,7 @@ func TestTabletV2AssignmentUsesPublishedHubSnapshotAndExactCommandScope(t *testi
 	}
 
 	challenge := strings.Repeat("0a", 32)
-	commit, err := repo.CommitTabletSafeAssignment(ctx, deviceexperience.VerifiedTabletAssignmentInput{
+	input := deviceexperience.VerifiedTabletAssignmentInput{
 		AssignmentID: "11111111-1111-4111-8111-111111111111",
 		DeviceID: deviceID,
 		TargetProjectID: projectID,
@@ -98,7 +100,22 @@ func TestTabletV2AssignmentUsesPublishedHubSnapshotAndExactCommandScope(t *testi
 		AckChallenge: challenge,
 		AckSafeState: true,
 		ActorID: "owner",
+	}
+	denied := capability.WithWriteAuthorization(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		var epoch int64
+		if err := tx.QueryRowContext(ctx, "SELECT assignment_epoch FROM stage_device_assignments WHERE device_id = ?", deviceID).Scan(&epoch); err != nil || epoch != 2 {
+			t.Fatalf("assignment did not reach the guarded transaction: epoch=%d, %v", epoch, err)
+		}
+		return capability.ErrDispatchAuthorityRevoked
 	})
+	if _, err := repo.CommitTabletSafeAssignment(denied, input); !errors.Is(err, capability.ErrDispatchAuthorityRevoked) {
+		t.Fatalf("revoked assignment returned %v", err)
+	}
+	before, err := repo.GetAssignmentRecord(ctx, deviceID)
+	if err != nil || before.Epoch != 1 || before.ProjectID != "" {
+		t.Fatalf("revoked assignment changed binding: %+v, %v", before, err)
+	}
+	commit, err := repo.CommitTabletSafeAssignment(ctx, input)
 	if err != nil || commit.NextState != "ACTIVE" || commit.ToEpoch != 2 {
 		t.Fatalf("tablet assignment commit=%+v err=%v", commit, err)
 	}
@@ -134,6 +151,20 @@ func TestTabletV2AssignmentUsesPublishedHubSnapshotAndExactCommandScope(t *testi
 	if command.Envelope.ProjectID != projectID ||
 		command.Envelope.RuntimeSnapshotID != firstSnapshot {
 		t.Fatalf("command scope=%+v", command.Envelope)
+	}
+
+	camera, err := repo.ActiveTabletCameraAssignment(ctx, deviceID, projectID)
+	if err != nil || camera.RuntimeSnapshotID != firstSnapshot || camera.Epoch != commit.ToEpoch {
+		t.Fatalf("exact tablet camera assignment rejected: %+v, %v", camera, err)
+	}
+	if _, err := repo.ActiveTabletCameraAssignment(ctx, deviceID, secondProject.ID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("tablet camera assignment crossed projects: %v", err)
+	}
+	if _, err := handle.DB.ExecContext(ctx, "UPDATE runtime_snapshots SET status = 'REVOKED' WHERE runtime_snapshot_id = ?", firstSnapshot); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.ActiveTabletCameraAssignment(ctx, deviceID, projectID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("revoked Snapshot still grants camera viewing: %v", err)
 	}
 }
 

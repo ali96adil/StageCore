@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/executionenv"
 )
@@ -26,6 +27,7 @@ func (s *Store) CaptureExecutionEnvironmentAsset(
 	assetKey string,
 	contentHash string,
 	sizeBytes int64,
+	expectedManifestSHA256 string,
 ) (ExecutionEnvironmentManifest, error) {
 	manifestID = strings.TrimSpace(manifestID)
 	assetKey = strings.TrimSpace(assetKey)
@@ -54,6 +56,11 @@ func (s *Store) CaptureExecutionEnvironmentAsset(
 	// SHOW lock intentionally takes precedence over frozen revision state.
 	if err := s.RequireProjectConfigurationMutable(ctx, revision.ProjectID); err != nil {
 		return ExecutionEnvironmentManifest{}, err
+	}
+
+	// The upload was accepted for the exact manifest the caller read.
+	if item.ContentSHA256 != expectedManifestSHA256 {
+		return ExecutionEnvironmentManifest{}, fmt.Errorf("%w: execution environment changed during capture", domain.ErrConflict)
 	}
 
 	assetIndex := -1
@@ -126,6 +133,9 @@ func (s *Store) CaptureExecutionEnvironmentAsset(
 	}
 	if rows != 1 {
 		return ExecutionEnvironmentManifest{}, fmt.Errorf("%w: execution environment changed during capture", domain.ErrConflict)
+	}
+	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
+		return ExecutionEnvironmentManifest{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return ExecutionEnvironmentManifest{}, fmt.Errorf("commit execution environment asset capture: %w", err)

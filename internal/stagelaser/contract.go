@@ -309,6 +309,24 @@ func CanonicalCommandPayload(commandType string, raw json.RawMessage) (json.RawM
 	}
 }
 
+// ControlGenerationCapability is a v2 wire feature advertised in the device hello.
+const ControlGenerationCapability = "laser.control_generation.v1"
+
+const MaxControlGeneration int64 = 1<<53 - 1
+
+// RequiresFreshDeadline identifies commands that may enable or reassert output.
+func RequiresFreshDeadline(commandType string, payload json.RawMessage) bool {
+	switch commandType {
+	case CommandArm, CommandSetOn, CommandFlashStart:
+		return true
+	case CommandStateResync:
+		var state StateResyncPayload
+		return json.Unmarshal(payload, &state) == nil && state.State == StateOn
+	default:
+		return false
+	}
+}
+
 func CanonicalEmptyPayload() json.RawMessage {
 	return json.RawMessage(`{}`)
 }

@@ -230,3 +230,31 @@ func TestSessionExecutorRequiresPersistedExecutionAuthority(t *testing.T) {
 		t.Fatalf("resolver action calls=%d snapshot calls=%d physical calls=%d", resolver.actionCalls, resolver.snapshotCalls, physical.calls)
 	}
 }
+
+func TestSessionExecutorPreservesContextTerminationDuringAuthorityResolution(t *testing.T) {
+	expired, cancelExpired := context.WithTimeout(context.Background(), 0)
+	defer cancelExpired()
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	for _, tc := range []struct {
+		name        string
+		ctx         context.Context
+		resolverErr error
+		want        domain.ExecutionResult
+		code        string
+	}{
+		{"expired despite resolved session", expired, nil, domain.ExecutionTimedOut, "TIMEOUT"},
+		{"cancelled despite resolved session", cancelled, nil, domain.ExecutionCancelled, "CANCELLED"},
+		{"resolver deadline", context.Background(), context.DeadlineExceeded, domain.ExecutionTimedOut, "TIMEOUT"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resolver := &fakeSessionResolver{actionSession: activeSession("show-1", domain.SessionShow), actionErr: tc.resolverErr}
+			physical := &recordingExecutor{}
+			executor := NewSessionExecutor(resolver, physical)
+			result := executor.Execute(tc.ctx, capability.Request{ExecutionID: "action", Capability: "osc.send"})
+			if result.Result != tc.want || result.ErrorCode != tc.code || result.AckLevel != contracts.AckNone || physical.calls != 0 {
+				t.Fatalf("result=%#v physical calls=%d", result, physical.calls)
+			}
+		})
+	}
+}

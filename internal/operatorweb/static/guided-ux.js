@@ -438,12 +438,13 @@ renderConfiguration = async function f002RenderConfiguration(...args) {
 renderCues = async function f002RenderCues(message = "") {
   await f002BaseRenderCues(message);
   const projectID = encodeURIComponent(state.project.project_id);
-  const [configuration, tabletController, lightingController, stageLaserController, machineRoles] = await Promise.all([
+  const [configuration, tabletController, lightingController, stageLaserController, machineRoles, extensionInstallations] = await Promise.all([
     f002Optional(`/api/v1/projects/${projectID}/configuration`, { targets: [] }),
     f002Optional(`/api/v1/projects/${projectID}/tablet-controller`, { devices: [] }),
     f002Optional(`/api/v1/projects/${projectID}/lighting-controller`, { nodes: [] }),
     f002Optional(`/api/v1/projects/${projectID}/stagelaser-controller`, { devices: [] }),
     f002Optional(`/api/v1/projects/${projectID}/machine-roles`, { roles: [], companions: [] }),
+    f002Optional("/api/v1/extensions/installations", { installations: [] }),
   ]);
   state.f002Targets = configuration.targets || [];
   state.f002Tablets = tabletController.devices || [];
@@ -451,6 +452,13 @@ renderCues = async function f002RenderCues(message = "") {
   state.f002StageLasers = stageLaserController.devices || [];
   state.f002MachineRoles = machineRoles.roles || [];
   state.f002Companions = machineRoles.companions || [];
+  // The Add-on library is not an installation. Gate new Action composers on
+  // the Hub's verified installations, not on bundled UI code or device APIs.
+  state.f002InstalledAddons = new Set(
+    (extensionInstallations.installations || [])
+      .filter((item) => item.kind === "ADDON" && item.lifecycle_state === "INSTALLED")
+      .map((item) => item.extension_id)
+  );
   f002InstallTargetDatalist(state.f002Targets);
 };
 
@@ -917,11 +925,21 @@ function f002InstallCueComposer() {
   const sources = (state.cues || []).filter((cue) =>
     cue.cue_id !== currentCueID && Array.isArray(cue.actions) && cue.actions.length > 0
   );
+  const installedAddons = state.f002InstalledAddons || new Set();
+  const supportedAddons = [
+    "stagecore.tablet-controller",
+    "stagecore.lighting-controller",
+    "stagecore.stagelaser-controller",
+  ];
+  // A fresh Hub has neither imported Cues nor installed Add-ons. Keep the
+  // Cue editor focused on its core OSC/MIDI Action builder in that case.
+  if (!sources.length && !supportedAddons.some((id) => installedAddons.has(id))) return;
 
   const composer = document.createElement("section");
   composer.id = "f002CueComposer";
   composer.className = "f002-builder f002-cue-composer";
   composer.innerHTML = `
+    <section data-f002-import>
     <div class="f002-builder-head">
       <div>
         <strong>Compose from existing Cues</strong>
@@ -939,7 +957,9 @@ function f002InstallCueComposer() {
     </div>
     <div id="f002CueComposerMessage" class="message hidden"></div>
     <p class="muted">Imported Actions are independent copies. Action IDs are regenerated when this Cue is saved, so later edits to the source Cue do not silently alter this mixed Cue.</p>
+    </section>
 
+    <section data-f002-extension="stagecore.tablet-controller">
     <hr>
     <div class="f002-builder-head">
       <div>
@@ -973,7 +993,9 @@ function f002InstallCueComposer() {
     </div>
     <div id="f002TabletComposerMessage" class="message hidden"></div>
     <p class="muted">Common Tablet actions are visual. Advanced JSON is optional and only used when explicitly enabled.</p>
+    </section>
 
+    <section data-f002-extension="stagecore.lighting-controller">
     <hr>
     <div class="f002-builder-head">
       <div>
@@ -994,7 +1016,9 @@ function f002InstallCueComposer() {
     </div>
     <div id="f002LightingComposerMessage" class="message hidden"></div>
     <p class="muted">${f002LightingNodes().length ? "Uses the configured logical channel aliases and Lighting Node mapping." : "Configure a Lighting Node and logical channel aliases first."}</p>
+    </section>
 
+    <section data-f002-extension="stagecore.stagelaser-controller">
     <hr>
     <div class="f002-builder-head">
       <div>
@@ -1021,7 +1045,14 @@ function f002InstallCueComposer() {
     </div>
     <div id="f002StageLaserComposerMessage" class="message hidden"></div>
     <p class="muted">${f002StageLaserDevices().length ? "Uses the authenticated Stage Device target and canonical laser.* capabilities." : "Assign an ACTIVE StageLaser to this Project first."}</p>
+    </section>
   `;
+  if (!sources.length) composer.querySelector("[data-f002-import]")?.remove();
+  composer.querySelectorAll("[data-f002-extension]").forEach((section) => {
+    if (!installedAddons.has(section.dataset.f002Extension)) section.remove();
+  });
+  // The first visible section should not start with a divider.
+  composer.querySelector("section:first-child > hr")?.remove();
   actionsEditor.parentNode.insertBefore(composer, actionsEditor);
 
   composer.querySelector("#f002ImportCueActions")?.addEventListener("click", () => {
@@ -1150,29 +1181,34 @@ function f002ParsePolicyObject(raw) {
 
 function f002ParseTimeoutPolicy(raw) {
   const policy = f002ParsePolicyObject(raw);
-  if (!policy) return null;
-  const keys = Object.keys(policy);
-  if (keys.length === 0) return { timeoutMS: 0 };
-  if (keys.length !== 1 || keys[0] !== "timeout_ms") return null;
-  const timeoutMS = policy.timeout_ms;
-  if (!Number.isInteger(timeoutMS) || timeoutMS < 0) return null;
-  return { timeoutMS };
+  if (!policy || Object.keys(policy).some((key) => !["timeout_ms", "start_delay_ms"].includes(key))) return null;
+  const timeoutMS = Object.hasOwn(policy, "timeout_ms") ? policy.timeout_ms : 0;
+  const startDelayMS = Object.hasOwn(policy, "start_delay_ms") ? policy.start_delay_ms : 0;
+  if (!Number.isInteger(timeoutMS) || timeoutMS < 0 || !Number.isInteger(startDelayMS) || startDelayMS < 0 || startDelayMS > 600000) return null;
+  return { timeoutMS, startDelayMS };
 }
 
 function f002ParseErrorPolicy(raw) {
   const policy = f002ParsePolicyObject(raw);
-  if (!policy) return null;
-  const keys = Object.keys(policy);
-  if (keys.length === 0) return { onError: "FAIL_CUE" };
-  if (keys.length !== 1 || keys[0] !== "on_error" || typeof policy.on_error !== "string") return null;
-  const onError = policy.on_error.trim().toUpperCase();
-  if (!["FAIL_CUE", "CONTINUE"].includes(onError)) return null;
-  return { onError };
+  if (!policy || Object.keys(policy).some((key) => !["on_error", "retry_before_dispatch", "require_application_ack"].includes(key))) return null;
+  if (Object.keys(policy).length === 0) return { onError: "FAIL_CUE" };
+  const onError = Object.hasOwn(policy, "on_error") ? policy.on_error : "CONTINUE";
+  if (typeof onError !== "string" || !["FAIL_CUE", "CONTINUE"].includes(onError.trim().toUpperCase())) return null;
+  if (["retry_before_dispatch", "require_application_ack"].some((key) => Object.hasOwn(policy, key) && typeof policy[key] !== "boolean")) return null;
+  return { onError: onError.trim().toUpperCase(), retry: policy.retry_before_dispatch, requireACK: policy.require_application_ack };
+}
+
+function f002QLCArgument(value) {
+  if (!Number.isFinite(value) || value < 0 || value > 1) throw new Error("Enter a mapped float from 0 to 1.");
+  return {type: "float32", value};
 }
 
 function f002ArgumentRow(argument = { type: "string", value: "" }) {
   const row = document.createElement("div");
   row.className = "f002-argument-row";
+  const extensions = Object.fromEntries(Object.entries(argument)
+    .filter(([key]) => key !== "type" && key !== "value"));
+  if (Object.keys(extensions).length) row.dataset.f002Metadata = JSON.stringify(extensions);
   row.innerHTML = `
     <select class="f002-argument-type" aria-label="OSC value type">
       <option value="string">Text</option>
@@ -1214,10 +1250,15 @@ function f002ArgumentRow(argument = { type: "string", value: "" }) {
 function f002ReadArgument(row) {
   const type = row.querySelector(".f002-argument-type").value;
   const raw = row.querySelector(".f002-argument-input").value;
-  if (type === "bool") return { type, value: raw === "true" };
-  if (type === "int32") return { type, value: Number.parseInt(raw, 10) };
-  if (type === "float32") return { type, value: Number(raw) };
-  return { type, value: raw };
+  let extensions = {};
+  try {
+    const parsed = JSON.parse(row.dataset?.f002Metadata || "{}");
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) extensions = parsed;
+  } catch (_) { /* Ignore invalid UI-only metadata; authored value stays editable. */ }
+  const value = type === "bool" ? raw === "true"
+    : type === "int32" ? Number.parseInt(raw, 10)
+      : type === "float32" ? Number(raw) : raw;
+  return { ...extensions, type, value };
 }
 
 function f002EnhanceActionCard(card) {
@@ -1253,8 +1294,20 @@ function f002EnhanceActionCard(card) {
     </div>
     <div class="f002-osc-action">
       <label>OSC address<input class="f002-osc-address" placeholder="/stagecore/go" pattern="/.*" title="OSC address must start with /"></label>
+      <div class="f002-oscquery-browser">
+        <button class="button ghost f002-oscquery-discover" type="button">Discover VDMX Controls</button>
+        <select class="f002-oscquery-control hidden" aria-label="Published VDMX OSC Control"></select>
+        <small class="muted f002-oscquery-message" role="status">Read-only discovery; keeps the existing OSC target and port unchanged.</small>
+      </div>
       <div class="section-title-row"><div><strong>Values</strong><p class="muted">Optional OSC arguments in send order.</p></div><button class="button ghost f002-add-argument" type="button">+ Value</button></div>
       <div class="f002-arguments"></div>
+      <details>
+        <summary>QLC+ mapped fader (optional)</summary>
+        <p class="muted">Use the OSC address and target port mapped in QLC+. This preset adds one normalized Float32 value to the draft.</p>
+        <label>Mapped level (0–1)<input class="f002-qlc-level" type="number" min="0" max="1" step="any" value="0"></label>
+        <button class="button ghost f002-qlc-apply" type="button">Set mapped fader value</button>
+        <small class="muted f002-qlc-status" role="status"></small>
+      </details>
     </div>
     <div class="f002-midi-action hidden">
       <div class="form-grid two">
@@ -1295,6 +1348,11 @@ function f002EnhanceActionCard(card) {
       <label class="f002-timeout-custom hidden">Custom timeout (ms)
         <input class="f002-timeout-ms" type="number" min="0" step="1" value="1000">
       </label>
+      <label class="f002-delay-field">Action start delay (ms)
+        <input class="f002-action-delay" type="number" min="0" max="600000" step="1" value="0">
+      </label>
+      <label class="check-row f002-retry-field"><input class="f002-retry-before-dispatch" type="checkbox"> Retry once if no dispatch occurred</label>
+      <label class="check-row f002-ack-field"><input class="f002-require-app-ack" type="checkbox"> Require receiving application ACK</label>
       <label>On action failure
         <select class="f002-error-kind">
           <option value="FAIL_CUE">Fail Cue / stop following sequential work</option>
@@ -1323,6 +1381,68 @@ function f002EnhanceActionCard(card) {
   const midiPanel = builder.querySelector(".f002-midi-action");
   const address = builder.querySelector(".f002-osc-address");
   const argumentsNode = builder.querySelector(".f002-arguments");
+  const discoverButton = builder.querySelector(".f002-oscquery-discover");
+  const controlSelect = builder.querySelector(".f002-oscquery-control");
+  const discoveryMessage = builder.querySelector(".f002-oscquery-message");
+  let discoveredControls = [];
+  discoverButton.addEventListener("click", async () => {
+    discoverButton.disabled = true;
+    discoveryMessage.textContent = "Discovering VDMX published controls…";
+    controlSelect.classList.add("hidden");
+    try {
+      const projectID = encodeURIComponent(state.project.project_id);
+      const dashboard = await api(`/api/v1/projects/${projectID}/dashboard`);
+      const revisionID = dashboard.draft_revision?.revision_id;
+      if (!revisionID) throw new Error("Create a Draft revision before discovering OSC controls.");
+      const revision = encodeURIComponent(revisionID);
+      const environments = await api(`/api/v1/projects/${projectID}/revisions/${revision}/execution-environments`);
+      const vdmx = (environments.execution_environments || []).filter((item) =>
+        item.adapter_key === "stagecore.adapter.vdmx" && item.machine_role_id);
+      if (!vdmx.length) throw new Error("Bind a VDMX execution environment to a Machine Role first.");
+      const environment = vdmx.length === 1 ? vdmx[0] : vdmx.find((item) =>
+        window.confirm(`Discover controls from VDMX environment “${item.name}”?`));
+      if (!environment) { discoveryMessage.textContent = "Discovery cancelled."; return; }
+      const result = await api(
+        `/api/v1/projects/${projectID}/revisions/${revision}/execution-environments/${encodeURIComponent(environment.execution_environment_id)}/oscquery/discover`,
+        { method: "POST", json: {} }
+      );
+      if (result.status !== "COMPLETED") throw new Error(result.error_code || "Discovery unavailable");
+      discoveredControls = (result.controls || []).filter((item) => item.path?.startsWith("/") && item.type);
+      controlSelect.replaceChildren();
+      const hint = document.createElement("option");
+      hint.value = "";
+      hint.textContent = "Select a published OSC control…";
+      controlSelect.appendChild(hint);
+      for (const item of discoveredControls) {
+        const option = document.createElement("option");
+        option.value = item.path;
+        option.textContent = `${item.path} (${item.type})`;
+        controlSelect.appendChild(option);
+      }
+      controlSelect.classList.toggle("hidden", !discoveredControls.length);
+      discoveryMessage.textContent = `${discoveredControls.length} published control(s). Advertised UDP ${result.osc_port}; existing OSC target is not changed.`;
+    } catch (error) {
+      discoveryMessage.textContent = `VDMX discovery unavailable: ${error.message || error}`;
+    } finally {
+      discoverButton.disabled = false;
+    }
+  });
+  controlSelect.addEventListener("change", () => {
+    const control = discoveredControls.find((item) => item.path === controlSelect.value);
+    if (!control) return;
+    address.value = control.path;
+    const type = ({ f: "float32", i: "int32", s: "string", T: "bool", F: "bool" })[control.type];
+    if (type) {
+      const existing = argumentsNode.querySelectorAll(".f002-argument-row");
+      if (!existing.length) {
+        const initial = type === "bool" ? (control.type === "T") : type === "string" ? "" :
+          Number.isFinite(control.minimum) ? control.minimum : 0;
+        argumentsNode.appendChild(f002ArgumentRow({ type, value: initial }));
+      }
+    }
+    discoveryMessage.textContent = "OSC address selected. Review arguments and target before saving the Cue.";
+  });
+
   const midiDestinationMode = builder.querySelector(".f002-midi-destination-mode");
   const midiDestinationNameField = builder.querySelector(".f002-midi-destination-name-field");
   const midiDestinationIndexField = builder.querySelector(".f002-midi-destination-index-field");
@@ -1369,6 +1489,12 @@ function f002EnhanceActionCard(card) {
     timeoutMS.value = String(parsedTimeout.timeoutMS);
   }
   errorKind.value = parsedErrorPolicy?.onError || "advanced";
+  const delay = builder.querySelector(".f002-action-delay");
+  const retry = builder.querySelector(".f002-retry-before-dispatch");
+  const appACK = builder.querySelector(".f002-require-app-ack");
+  delay.value = String(parsedTimeout?.startDelayMS ?? 0);
+  retry.checked = parsedErrorPolicy?.retry === true;
+  appACK.checked = parsedErrorPolicy?.requireACK === true;
 
   const refreshMIDIDestinations = () => {
     const names = f002MIDIDestinationsForTarget(target.value);
@@ -1403,6 +1529,8 @@ function f002EnhanceActionCard(card) {
     const custom = timeoutKind.value === "custom";
     timeoutCustom.classList.toggle("hidden", !custom);
     timeoutMS.required = custom;
+    delay.disabled = timeoutKind.value === "advanced";
+    retry.disabled = appACK.disabled = errorKind.value === "advanced";
     if (timeoutKind.value === "advanced" || errorKind.value === "advanced") advanced.open = true;
   };
 
@@ -1428,8 +1556,31 @@ function f002EnhanceActionCard(card) {
   midiMessage.addEventListener("change", renderMIDIFields);
   timeoutKind.addEventListener("change", applyKind);
   errorKind.addEventListener("change", applyKind);
+  builder.querySelector(".f002-qlc-apply").addEventListener("click", () => {
+    const status = builder.querySelector(".f002-qlc-status");
+    try {
+      if (!address.value.trim().startsWith("/")) throw new Error("Enter the mapped QLC+ OSC address first.");
+      const level = builder.querySelector(".f002-qlc-level").valueAsNumber;
+      const argument = f002QLCArgument(level);
+      if (argumentsNode.children.length && !window.confirm("Replace the existing OSC arguments with the mapped QLC+ float?")) return;
+      argumentsNode.replaceChildren(f002ArgumentRow(argument));
+      status.textContent = "Mapped value set. Review the target before saving.";
+    } catch (error) {
+      status.textContent = error.message;
+    }
+  });
   builder.querySelector(".f002-add-argument").addEventListener("click", () => argumentsNode.appendChild(f002ArgumentRow()));
   applyKind();
+}
+
+function f002MergeUnknownActionFields(raw, knownFields, replacement) {
+  let parsed;
+  try { parsed = JSON.parse(String(raw || "{}")); }
+  catch (_) { return replacement; }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return replacement;
+  const known = new Set(knownFields);
+  const extensions = Object.fromEntries(Object.entries(parsed).filter(([key]) => !known.has(key)));
+  return { ...extensions, ...replacement };
 }
 
 function f002SyncActionCard(card) {
@@ -1439,17 +1590,21 @@ function f002SyncActionCard(card) {
   const timeoutKind = card.querySelector(".f002-timeout-kind");
   const errorKind = card.querySelector(".f002-error-kind");
   if (timeout && timeoutKind && timeoutKind.value !== "advanced") {
-    if (timeoutKind.value === "none") {
-      timeout.value = "{}";
-    } else {
-      const timeoutMS = timeoutKind.value === "custom"
+    const policy = {};
+    if (timeoutKind.value !== "none") {
+      policy.timeout_ms = timeoutKind.value === "custom"
         ? Number.parseInt(card.querySelector(".f002-timeout-ms")?.value || "", 10)
         : Number.parseInt(timeoutKind.value, 10);
-      timeout.value = JSON.stringify({ timeout_ms: timeoutMS }, null, 2);
     }
+    const delayMS = Number(card.querySelector(".f002-action-delay")?.value || 0);
+    if (delayMS) policy.start_delay_ms = delayMS;
+    timeout.value = JSON.stringify(policy, null, 2);
   }
   if (errorPolicy && errorKind && errorKind.value !== "advanced") {
-    errorPolicy.value = JSON.stringify({ on_error: errorKind.value }, null, 2);
+    const policy = {on_error: errorKind.value};
+    if (card.querySelector(".f002-retry-before-dispatch")?.checked) policy.retry_before_dispatch = true;
+    if (card.querySelector(".f002-require-app-ack")?.checked) policy.require_application_ack = true;
+    errorPolicy.value = JSON.stringify(policy, null, 2);
   }
 
   const kind = card.querySelector(".f002-action-kind");
@@ -1460,7 +1615,8 @@ function f002SyncActionCard(card) {
     const address = card.querySelector(".f002-osc-address").value.trim();
     const args = [...card.querySelectorAll(".f002-argument-row")].map(f002ReadArgument);
     capability.value = "osc.send";
-    params.value = JSON.stringify({ address, arguments: args }, null, 2);
+    params.value = JSON.stringify(f002MergeUnknownActionFields(params.value,
+      ["address", "arguments"], { address, arguments: args }), null, 2);
     return;
   }
   if (kind.value === "midi") {
@@ -1474,9 +1630,11 @@ function f002SyncActionCard(card) {
     const bytes = [f002MIDIStatus(message, channel), data1];
     if (message !== "program_change") bytes.push(data2);
     capability.value = "midi.send";
-    params.value = JSON.stringify(destinationMode === "name"
+    const replacement = destinationMode === "name"
       ? { destination_name: destinationName, bytes }
-      : { destination_index: destinationIndex, bytes }, null, 2);
+      : { destination_index: destinationIndex, bytes };
+    params.value = JSON.stringify(f002MergeUnknownActionFields(params.value,
+      ["destination_name", "destination_index", "bytes"], replacement), null, 2);
   }
 }
 

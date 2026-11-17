@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ali96adil/StageCore/internal/clock"
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/domain"
 	stageid "github.com/ali96adil/StageCore/internal/id"
 )
@@ -77,7 +78,7 @@ func (s *Store) RegisterExtensionInstallation(ctx context.Context, p RegisterExt
 		return ExtensionInstallation{}, err
 	}
 	now := s.clock.Now().UTC()
-	_, err = s.db.ExecContext(ctx, `
+	_, err = capability.ExecAuthorized(ctx, s.db, `
 		INSERT INTO extension_installations (
 			installation_id, package_id, lifecycle_state, payload_relative_path,
 			content_sha256, size_bytes, installed_by, installed_at_us
@@ -143,6 +144,9 @@ func (s *Store) ReplaceExtensionInstallation(ctx context.Context, installationID
 	}
 	if rows != 1 {
 		return ExtensionInstallation{}, domain.ErrNotFound
+	}
+	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
+		return ExtensionInstallation{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return ExtensionInstallation{}, fmt.Errorf("commit extension installation replacement: %w", err)

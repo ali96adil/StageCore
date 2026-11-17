@@ -1,12 +1,14 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/devicechannel"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
 	"github.com/ali96adil/StageCore/internal/domain"
@@ -17,10 +19,15 @@ import (
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
 
+type lightingCommissioningRuntime interface {
+	Dispatch(context.Context, deviceexperience.CreateCommandInput) (deviceexperience.DeviceCommand, error)
+	CurrentV2Scope(string) (devicechannel.V2RuntimeScope, bool)
+}
+
 func WithOperatorLightingCommissioning(
 	auth *userauth.Service,
 	devices *deviceexperience.Repository,
-	runtime *devicechannel.Runtime,
+	runtime lightingCommissioningRuntime,
 	stageStore *store.Store,
 ) Option {
 	return func(s *Server) {
@@ -112,6 +119,10 @@ func WithOperatorLightingCommissioning(
 				writeStageDeviceCommandError(w, err)
 				return
 			}
+			if capability.CheckDispatch(r.Context()) != nil {
+				writeLightingDispatchAuthorityEnded(w)
+				return
+			}
 			writeJSON(w, http.StatusAccepted, map[string]any{"command": command, "alias": input.Alias})
 		}))
 
@@ -185,6 +196,10 @@ func WithOperatorLightingCommissioning(
 				writeStageDeviceCommandError(w, err)
 				return
 			}
+			if capability.CheckDispatch(r.Context()) != nil {
+				writeLightingDispatchAuthorityEnded(w)
+				return
+			}
 			hash, _ := lightingnode.ConfigurationHash(binding.Configuration)
 			writeJSON(w, http.StatusAccepted, map[string]any{
 				"command": command,
@@ -219,7 +234,7 @@ func lightingCommissioningSnapshot(device deviceexperience.Device, projectID str
 
 // The current authenticated socket must agree with the committed v2 scope
 // before an Operator Identify/config command can reach the physical output.
-func lightingCommissioningScopeReady(runtime *devicechannel.Runtime, device deviceexperience.Device, projectID, snapshotID string) bool {
+func lightingCommissioningScopeReady(runtime lightingCommissioningRuntime, device deviceexperience.Device, projectID, snapshotID string) bool {
 	if device.ProtocolVersion == deviceexperience.ProtocolVersion1 {
 		return true
 	}
@@ -231,4 +246,14 @@ func lightingCommissioningScopeReady(runtime *devicechannel.Runtime, device devi
 		scope.ProjectID == projectID &&
 		scope.RuntimeSnapshotID == snapshotID &&
 		scope.AssignmentEpoch == device.Assignment.Epoch
+}
+
+
+func writeLightingDispatchAuthorityEnded(w http.ResponseWriter) {
+	writeJSON(w, http.StatusForbidden, map[string]any{
+		"error_code": capability.DispatchAuthorityRevokedCode,
+		"detail": "The device command may already have been sent. Check current device state before taking further action.",
+		"effect_may_have_been_sent": true,
+		"retryable": false,
+	})
 }

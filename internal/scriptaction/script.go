@@ -22,6 +22,7 @@ const (
 	defaultTimeout = 5 * time.Second
 	maxTimeout     = 30 * time.Second
 	maxArguments   = 128
+	dispatchPoll   = 50 * time.Millisecond
 )
 
 type Executor struct{}
@@ -84,9 +85,36 @@ func (Executor) Execute(ctx context.Context, req capability.Request) capability.
 		}
 		cmd.Dir = directory
 	}
+	if err := capability.CheckDispatch(execCtx); err != nil {
+		switch {
+		case errors.Is(err, capability.ErrDispatchAuthorityRevoked):
+			return capability.Result{
+				Result: domain.ExecutionFailed, AckLevel: contracts.AckNone,
+				ErrorCode:            capability.DispatchAuthorityRevokedCode,
+				ResponseSummary:      "Script Action authority ended before child process start",
+				DispatchNotAttempted: true,
+			}
+		case errors.Is(execCtx.Err(), context.DeadlineExceeded):
+			return capability.Result{
+				Result: domain.ExecutionTimedOut, AckLevel: contracts.AckNone,
+				ErrorCode: "SCRIPT_TIMEOUT", ResponseSummary: "Script Action timed out before child process start",
+				DispatchNotAttempted: true,
+			}
+		case errors.Is(execCtx.Err(), context.Canceled):
+			return capability.Result{
+				Result: domain.ExecutionCancelled, AckLevel: contracts.AckNone,
+				ErrorCode: "SCRIPT_CANCELLED", ResponseSummary: "Script Action was cancelled before child process start",
+				DispatchNotAttempted: true,
+			}
+		default:
+			return scriptFailure("SCRIPT_DISPATCH_REJECTED", "Script Action was rejected before child process start", contracts.AckNone)
+		}
+	}
 	if err := cmd.Start(); err != nil {
 		return scriptFailure("SCRIPT_START_FAILED", "Script child process could not be started", contracts.AckNone)
 	}
+	stopWatching := watchDispatchAuthority(execCtx, cancel)
+	defer stopWatching()
 	err := cmd.Wait()
 	if err == nil {
 		return capability.Result{Result: domain.ExecutionCompleted, AckLevel: contracts.AckAccepted, ResponseSummary: "Script child process exited successfully"}
@@ -102,6 +130,36 @@ func (Executor) Execute(ctx context.Context, req capability.Request) capability.
 		return scriptFailure(fmt.Sprintf("SCRIPT_EXIT_%d", exitErr.ExitCode()), fmt.Sprintf("Script child process exited with status %d", exitErr.ExitCode()), contracts.AckAccepted)
 	}
 	return scriptFailure("SCRIPT_EXECUTION_FAILED", "Script child process failed", contracts.AckAccepted)
+}
+
+func watchDispatchAuthority(ctx context.Context, cancel context.CancelFunc) func() {
+	if !capability.HasDispatchCheck(ctx) {
+		return func() {}
+	}
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(dispatchPoll)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-stop:
+				return
+			case <-ticker.C:
+				if errors.Is(capability.CheckDispatch(ctx), capability.ErrDispatchAuthorityRevoked) {
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+	return func() {
+		close(stop)
+		<-done
+	}
 }
 
 func scriptTimeout(timeoutMS int64) time.Duration {

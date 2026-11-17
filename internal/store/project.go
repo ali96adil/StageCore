@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/ali96adil/StageCore/internal/clock"
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/domain"
 	stageid "github.com/ali96adil/StageCore/internal/id"
 )
@@ -53,6 +54,9 @@ func (s *Store) CreateProject(ctx context.Context, p CreateProjectParams) (domai
 	if _, err := tx.ExecContext(ctx, `UPDATE projects SET current_revision_id = ? WHERE project_id = ?`, revisionID, projectID); err != nil {
 		return domain.Project{}, domain.ProjectRevision{}, fmt.Errorf("set current revision: %w", err)
 	}
+	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
+		return domain.Project{}, domain.ProjectRevision{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return domain.Project{}, domain.ProjectRevision{}, fmt.Errorf("commit create project: %w", err)
 	}
@@ -78,13 +82,56 @@ func (s *Store) CreateProject(ctx context.Context, p CreateProjectParams) (domai
 	return project, revision, nil
 }
 
+// RenameProject changes only mutable Project metadata. ProjectID, revision,
+// Snapshot, Cue and Vault object identities remain unchanged, so no republish
+// or physical media rename is required. This operation is safe during an
+// ongoing rehearsal/show because runtime references use IDs, not the title.
+func (s *Store) RenameProject(ctx context.Context, projectID, newName string) (domain.Project, error) {
+	projectID = strings.TrimSpace(projectID)
+	newName = strings.TrimSpace(newName)
+	if projectID == "" || newName == "" || len([]rune(newName)) > 160 ||
+		strings.ContainsAny(newName, "\x00\r\n") {
+		return domain.Project{}, fmt.Errorf("%w: project name must contain 1–160 characters without control line breaks", domain.ErrInvalidInput)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.Project{}, fmt.Errorf("begin rename project: %w", err)
+	}
+	defer tx.Rollback()
+	current, err := getProject(ctx, tx, projectID)
+	if err != nil {
+		return domain.Project{}, err
+	}
+	if current.Name != newName {
+		now := s.clock.Now().UTC()
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE projects SET name = ?, updated_at_us = ? WHERE project_id = ?`,
+			newName, clock.UnixMicros(now), projectID); err != nil {
+			return domain.Project{}, fmt.Errorf("rename project metadata: %w", err)
+		}
+		current.Name = newName
+		current.UpdatedAt = clock.FromUnixMicros(clock.UnixMicros(now))
+	}
+	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
+		return domain.Project{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.Project{}, fmt.Errorf("commit rename project: %w", err)
+	}
+	return current, nil
+}
+
 func (s *Store) GetProject(ctx context.Context, projectID string) (domain.Project, error) {
+	return getProject(ctx, s.db, projectID)
+}
+
+func getProject(ctx context.Context, q queryer, projectID string) (domain.Project, error) {
 	var p domain.Project
 	var lifecycle string
 	var current sql.NullString
 	var venue sql.NullString
 	var createdUS, updatedUS int64
-	err := s.db.QueryRowContext(ctx, `
+	err := q.QueryRowContext(ctx, `
 		SELECT project_id, name, description, lifecycle_state, current_revision_id, default_venue_profile_id, created_at_us, updated_at_us
 		FROM projects WHERE project_id = ?`, projectID).Scan(
 		&p.ID, &p.Name, &p.Description, &lifecycle, &current, &venue, &createdUS, &updatedUS,
@@ -141,7 +188,7 @@ func (s *Store) SetRevisionStatus(ctx context.Context, revisionID string, next d
 	if !valid {
 		return fmt.Errorf("%w: revision transition %s -> %s", domain.ErrConflict, current.Status, next)
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE project_revisions SET status = ? WHERE revision_id = ? AND status = ?`, next, revisionID, current.Status)
+	result, err := capability.ExecAuthorized(ctx, s.db, `UPDATE project_revisions SET status = ? WHERE revision_id = ? AND status = ?`, next, revisionID, current.Status)
 	if err != nil {
 		return fmt.Errorf("set revision status: %w", err)
 	}
@@ -154,7 +201,6 @@ func (s *Store) SetRevisionStatus(ctx context.Context, revisionID string, next d
 	}
 	return nil
 }
-
 
 // ReopenCurrentValidatedRevisionIfUnpublished restores the current revision
 // to DRAFT only when Publish validated it but failed before committing any

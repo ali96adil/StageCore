@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/executionenv"
@@ -85,7 +86,7 @@ func (s *Store) UpsertExecutionEnvironmentRebuildPlan(
 	if err != nil {
 		return ExecutionEnvironmentRebuildPlan{}, err
 	}
-	_, err = s.db.ExecContext(ctx, `
+	_, err = capability.ExecAuthorized(ctx, s.db, `
 		INSERT INTO execution_environment_rebuild_plans (
 			rebuild_plan_id, environment_manifest_id, revision_id, source_snapshot_id,
 			source_snapshot_sha256, plan_json, content_sha256,
@@ -159,7 +160,7 @@ func (s *Store) DeleteExecutionEnvironmentRebuildPlan(ctx context.Context, manif
 	if err := s.ensureDraft(ctx, s.db, item.RevisionID); err != nil {
 		return err
 	}
-	result, err := s.db.ExecContext(ctx, `DELETE FROM execution_environment_rebuild_plans WHERE rebuild_plan_id = ?`, item.ID)
+	result, err := capability.ExecAuthorized(ctx, s.db, `DELETE FROM execution_environment_rebuild_plans WHERE rebuild_plan_id = ?`, item.ID)
 	if err != nil {
 		return mapExecutionEnvironmentRebuildPlanWriteError("delete assisted rebuild plan", err)
 	}

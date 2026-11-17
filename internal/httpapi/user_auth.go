@@ -52,9 +52,9 @@ func registerUserAuthRoutes(mux *http.ServeMux, service *userauth.Service, hub *
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"hub_id": identity.HubID,
-			"display_name": identity.DisplayName,
-			"fingerprint": identity.Fingerprint,
+			"hub_id":          identity.HubID,
+			"display_name":    identity.DisplayName,
+			"fingerprint":     identity.Fingerprint,
 			"bootstrap_state": identity.BootstrapState,
 		})
 	})
@@ -96,7 +96,7 @@ func registerUserAuthRoutes(mux *http.ServeMux, service *userauth.Service, hub *
 		})
 		setBrowserSessionCookie(w, r, credential.Token, credential.Session.ExpiresAt)
 		writeJSON(w, http.StatusOK, map[string]any{
-			"user": credential.Session.User,
+			"user":       credential.Session.User,
 			"expires_at": credential.Session.ExpiresAt.Format(time.RFC3339Nano),
 			"csrf_token": credential.CSRFToken,
 		})
@@ -104,7 +104,7 @@ func registerUserAuthRoutes(mux *http.ServeMux, service *userauth.Service, hub *
 
 	mux.HandleFunc("GET /api/v1/auth/me", withPermission(service, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 		writeJSON(w, http.StatusOK, map[string]any{
-			"user": session.User,
+			"user":       session.User,
 			"expires_at": session.ExpiresAt.Format(time.RFC3339Nano),
 		})
 	}))
@@ -145,7 +145,7 @@ func registerUserAuthRoutes(mux *http.ServeMux, service *userauth.Service, hub *
 		})
 		setBrowserSessionCookie(w, r, credential.Token, credential.Session.ExpiresAt)
 		writeJSON(w, http.StatusOK, map[string]any{
-			"user": credential.Session.User,
+			"user":       credential.Session.User,
 			"expires_at": credential.Session.ExpiresAt.Format(time.RFC3339Nano),
 			"csrf_token": credential.CSRFToken,
 		})
@@ -168,10 +168,14 @@ type sessionTokenHandler func(http.ResponseWriter, *http.Request, userauth.Sessi
 
 func withPermission(service *userauth.Service, permission userauth.Permission, next sessionHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		withAuthenticatedSession(service, isUnsafeMethod(r.Method), func(w http.ResponseWriter, r *http.Request, session userauth.Session, _ string) {
-			if err := userauth.Authorize(session.User.Role, permission); err != nil {
+		withAuthenticatedSession(service, isUnsafeMethod(r.Method), func(w http.ResponseWriter, r *http.Request, session userauth.Session, token string) {
+			if err := userauth.Authorize(session.User.Role, permission); err != nil &&
+				!scopedProjectRoleMayUsePermission(r, session.User.Role, permission) {
 				writeJSON(w, http.StatusForbidden, map[string]any{"error_code": "FORBIDDEN"})
 				return
+			}
+			if isUnsafeMethod(r.Method) && isHubPluginAdminPattern(r.Pattern) {
+				r = r.WithContext(pluginMutationContext(r, service, session, token, permission))
 			}
 			next(w, r, session)
 		})(w, r)
@@ -180,6 +184,10 @@ func withPermission(service *userauth.Service, permission userauth.Permission, n
 
 func withAuthenticatedSession(service *userauth.Service, requireCSRF bool, next sessionTokenHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Browser API responses can contain private Project, show and device
+		// state. Set this before authentication so success and denial responses
+		// share the same cache policy, including when a session expires.
+		w.Header().Set("Cache-Control", "no-store")
 		if !secureBrowserRequest(w, r) || !sameOriginRequest(w, r) {
 			return
 		}
@@ -205,7 +213,10 @@ func withAuthenticatedSession(service *userauth.Service, requireCSRF bool, next 
 			writeJSON(w, status, map[string]any{"error_code": code})
 			return
 		}
-		next(w, r, session, token)
+		r, allowed := qualifyProjectRoute(w, r, service, session, token)
+		if allowed {
+			next(w, r, session, token)
+		}
 	}
 }
 
@@ -276,7 +287,7 @@ func isUnsafeMethod(method string) bool {
 }
 
 func serveAuthenticatedSSE(w http.ResponseWriter, r *http.Request, service *userauth.Service, hub *hubsecurity.Service, session userauth.Session) {
-	flusher, ok := w.(http.Flusher)
+	_, ok := w.(http.Flusher)
 	if !ok {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error_code": "REALTIME_UNAVAILABLE"})
 		return
@@ -286,20 +297,42 @@ func serveAuthenticatedSSE(w http.ResponseWriter, r *http.Request, service *user
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "HUB_IDENTITY_UNAVAILABLE"})
 		return
 	}
+	token, ok := browserSessionToken(r)
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error_code": "AUTH_REQUIRED"})
+		return
+	}
+	current, err := service.ValidatePassive(r.Context(), token)
+	if err != nil || current.ID != session.ID || current.User.ID != session.User.ID {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error_code": "SESSION_INVALID"})
+		return
+	}
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Accel-Buffering", "no")
 	payload, _ := json.Marshal(map[string]any{
-		"type": "session.ready", "user": session.User,
+		"type": "session.ready", "user": current.User,
 		"hub_id": identity.HubID, "fingerprint": identity.Fingerprint,
 	})
-	_, _ = fmt.Fprintf(w, "event: session\ndata: %s\n\n", payload)
-	flusher.Flush()
-
-	token, ok := browserSessionToken(r)
-	if !ok {
+	controller := http.NewResponseController(w)
+	write := func(value string) bool {
+		if err := controller.SetWriteDeadline(time.Now().Add(2 * time.Second)); err != nil && !errors.Is(err, http.ErrNotSupported) {
+			return false
+		}
+		if _, err := fmt.Fprint(w, value); err != nil || controller.Flush() != nil {
+			return false
+		}
+		err := controller.SetWriteDeadline(time.Time{})
+		return err == nil || errors.Is(err, http.ErrNotSupported)
+	}
+	if !write(fmt.Sprintf("event: session\ndata: %s\n\n", payload)) {
 		return
 	}
+	active := func() bool {
+		current, err := service.ValidatePassive(r.Context(), token)
+		return err == nil && current.ID == session.ID && current.User.ID == session.User.ID
+	}
+
 	ticker := time.NewTicker(sessionRecheckInterval)
 	defer ticker.Stop()
 	keepAlive := time.NewTicker(15 * time.Second)
@@ -309,12 +342,13 @@ func serveAuthenticatedSSE(w http.ResponseWriter, r *http.Request, service *user
 		case <-r.Context().Done():
 			return
 		case <-ticker.C:
-			if _, err := service.Validate(r.Context(), token); err != nil {
+			if !active() {
 				return
 			}
 		case <-keepAlive.C:
-			_, _ = fmt.Fprint(w, ": keepalive\n\n")
-			flusher.Flush()
+			if !active() || !write(": keepalive\n\n") {
+				return
+			}
 		}
 	}
 }

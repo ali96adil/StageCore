@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/ali96adil/StageCore/internal/capability"
 	"strings"
 
 	stageid "github.com/ali96adil/StageCore/internal/id"
@@ -134,6 +135,9 @@ func (r *Repository) DecommissionOfflineTablet(ctx context.Context, deviceID, ac
 		return DecommissionRecord{}, fmt.Errorf("record tablet decommission audit: %w", err)
 	}
 
+	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
+		return DecommissionRecord{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return DecommissionRecord{}, fmt.Errorf("commit tablet decommission: %w", err)
 	}

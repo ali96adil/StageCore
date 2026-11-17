@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	stageid "github.com/ali96adil/StageCore/internal/id"
 )
 
@@ -87,6 +88,9 @@ func (r *Repository) ReserveTransferIntent(ctx context.Context, input TransferPr
 		actor, now.UnixMicro(), expires.UnixMicro(), now.UnixMicro())
 	if err != nil {
 		return TransferReservation{}, fmt.Errorf("%w: reservation conflicts with current assignment, SHOW, command or another transfer: %v", ErrInvalidState, err)
+	}
+	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
+		return TransferReservation{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return TransferReservation{}, fmt.Errorf("commit transfer reservation: %w", err)

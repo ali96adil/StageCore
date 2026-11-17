@@ -18,6 +18,8 @@ func main() {
 		os.Exit(2)
 	}
 	switch os.Args[1] {
+	case "clock":
+		os.Exit(runClock(os.Args[2:]))
 	case "doctor":
 		os.Exit(runDoctor(os.Args[2:]))
 	case "support-bundle":
@@ -38,6 +40,7 @@ func runDoctor(args []string) int {
 	installRoot := fs.String("install-root", defaults.InstallRoot, "StageCore installation root")
 	configRoot := fs.String("config-root", defaults.ConfigRoot, "StageCore deployment configuration root")
 	unitPath := fs.String("systemd-unit", defaults.SystemdUnit, "stagecore-hub systemd unit path")
+	serviceName := fs.String("service-name", "", "explicit systemd service name (must match --systemd-unit)")
 	httpTimeout := fs.Duration("http-timeout", defaults.HTTPTimeout, "timeout for each local Hub health request")
 	localeDefault := strings.TrimSpace(os.Getenv("STAGECORE_LOCALE"))
 	if localeDefault == "" {
@@ -72,6 +75,7 @@ func runDoctor(args []string) int {
 		InstallRoot: strings.TrimSpace(*installRoot),
 		ConfigRoot:  strings.TrimSpace(*configRoot),
 		SystemdUnit: strings.TrimSpace(*unitPath),
+		ServiceName: strings.TrimSpace(*serviceName),
 		HTTPTimeout: *httpTimeout,
 	})
 	if *jsonOutput {
@@ -87,6 +91,7 @@ func runDoctor(args []string) int {
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: stagecore <command> [options]")
+	fmt.Fprintln(os.Stderr, "  clock           check offline RTC boot evidence and optionally sync the RTC")
 	fmt.Fprintln(os.Stderr, "  doctor          run read-only StageCore deployment and health diagnostics")
 	fmt.Fprintln(os.Stderr, "  support-bundle  export a redacted diagnostics archive for support or offline review")
 }

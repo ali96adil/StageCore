@@ -17,6 +17,13 @@ func (s *Store) applyAssistantRouteMutationTx(ctx context.Context, tx *sql.Tx, r
 	route.RevisionID = revisionID
 	route.Name = strings.TrimSpace(route.Name)
 	route.InputID = strings.TrimSpace(route.InputID)
+	beforeRoute, err := readRouteTx(ctx, tx, revisionID, route.ID)
+	if err != nil {
+		return err
+	}
+	if mutation.TargetID != "" && beforeRoute == nil {
+		return domain.ErrNotFound
+	}
 	if route.Name == "" || route.InputID == "" {
 		return fmt.Errorf("%w: route name and input are required", domain.ErrInvalidInput)
 	}
@@ -128,5 +135,13 @@ func (s *Store) applyAssistantRouteMutationTx(ctx context.Context, tx *sql.Tx, r
 			return fmt.Errorf("insert assistant proposal route action: %w", err)
 		}
 	}
-	return nil
+	afterRoute, err := readRouteTx(ctx, tx, revisionID, route.ID)
+	if err != nil {
+		return err
+	}
+	operation := "CREATE"
+	if mutation.TargetID != "" {
+		operation = "EDIT"
+	}
+	return recordRouteDraftHistoryTx(ctx, tx, revisionID, operation, route.ID, beforeRoute, afterRoute, cueDraftHistoryTimestamp(s.clock))
 }

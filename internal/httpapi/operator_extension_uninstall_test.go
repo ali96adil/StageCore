@@ -2,12 +2,14 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/extension"
 	"github.com/ali96adil/StageCore/internal/software"
@@ -15,6 +17,101 @@ import (
 	"github.com/ali96adil/StageCore/internal/userauth"
 	"github.com/ali96adil/StageCore/internal/vault"
 )
+
+func TestOperatorExtensionUninstallSuppressesCommittedResultAfterOwnerRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	v, err := vault.Open(t.TempDir(), stageStore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := software.New(v, stageStore, software.CurrentHubAPIVersion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	softwarePackage, err := repository.ImportPackage(ctx, software.ImportParams{
+		ProductID: "example.osc-plugin", Version: "1.2.3", Platform: "linux", Architecture: "arm64",
+		MinAPIVersion: 1, MaxAPIVersion: 1, OriginalFilename: "example-plugin",
+		SigningStatus: store.SoftwareSigningSigned, NotarizationStatus: store.SoftwareNotarizationNotApplicable,
+		ReleaseChannel: store.SoftwareChannelRelease,
+	}, strings.NewReader("owner-revoked uninstall payload"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	library, err := extension.NewLibrary(stageStore, repository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := library.Register(ctx, softwarePackage.ID, extensionTestManifest("LOCAL"), "owner"); err != nil {
+		t.Fatal(err)
+	}
+	installer, err := extension.NewInstaller(library, filepath.Join(t.TempDir(), "extensions"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	installed, err := installer.InstallPlanned(ctx, softwarePackage.ID, "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reviewer, err := extension.NewPermissionReviewer(installer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	readiness, err := extension.NewReadinessAssessor(installer, reviewer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	isolator, err := extension.NewRuntimeIsolator(installer, reviewer, readiness, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	probe, err := extension.NewRuntimeProbe(installer, isolator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	supervisor, err := extension.NewRuntimeSupervisor(installer, isolator, probe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer supervisor.Close()
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	revoked := false
+	handler := New(withOperatorExtensionRuntimeLifecycle(h.auth, supervisor, nil, extensionRuntimeLifecycleHooks{
+		BeforeMutationResponse: func() {
+			revoked = true
+			if err := h.auth.Logout(ctx, owner.Token); err != nil {
+				t.Errorf("revoke Owner before uninstall response: %v", err)
+			}
+		},
+	})).Handler()
+	request := httptest.NewRequest(http.MethodDelete, "/api/v1/extensions/installations/"+installed.InstallationID, nil)
+	request.RemoteAddr = "127.0.0.1:19401"
+	request.Header.Set(csrfHeader, owner.CSRFToken)
+	request.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: owner.Token})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if !revoked {
+		t.Fatal("test did not revoke Owner immediately before response delivery")
+	}
+	var body map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusForbidden || body["error_code"] != capability.DispatchAuthorityRevokedCode ||
+		body["effect_may_have_been_committed"] != true || body["retryable"] != false {
+		t.Fatalf("revoked Owner received uninstall success/retryable response: HTTP %d %+v", response.Code, body)
+	}
+	if _, leaked := body["payload_removed"]; leaked {
+		t.Fatalf("revoked Owner received uninstall result after removal committed: %+v", body)
+	}
+	if _, err := supervisor.Status(ctx, installed.InstallationID); err == nil {
+		t.Fatal("regression did not commit uninstall before the final response fence")
+	}
+}
 
 func TestOperatorExtensionUninstallRequiresManagePermissionCSRFAndDisabledRuntime(t *testing.T) {
 	h := newAuthHarness(t)

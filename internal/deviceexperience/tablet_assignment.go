@@ -9,9 +9,30 @@ import (
 	"fmt"
 	"math"
 	"strings"
+
+	"github.com/ali96adil/StageCore/internal/capability"
 )
 
 const TabletPlayerProfileID = "stagecore.tablet-player"
+
+// ActiveTabletCameraAssignment checks the device, its Hub-owned assignment,
+// and the assigned Snapshot together without fetching the Snapshot manifest.
+func (r *Repository) ActiveTabletCameraAssignment(ctx context.Context, deviceID, projectID string) (AssignmentRecord, error) {
+	var assignment AssignmentRecord
+	err := r.db.QueryRowContext(ctx, `
+		SELECT a.device_id, a.project_id, a.assignment_epoch, a.assignment_state, a.runtime_snapshot_id
+		FROM stage_device_assignments a
+		JOIN stage_devices d ON d.device_id = a.device_id
+		JOIN runtime_snapshots s ON s.runtime_snapshot_id = a.runtime_snapshot_id AND s.project_id = a.project_id
+		WHERE a.device_id = ? AND a.project_id = ? AND a.assignment_state = 'ACTIVE'
+		  AND a.assignment_epoch > 0 AND s.status = 'PUBLISHED' AND d.enabled = 1
+		  AND COALESCE(d.project_id, '') = '' AND d.protocol_version = ?
+		  AND d.device_kind = ? AND d.profile_id = ?
+	`, deviceID, projectID, ProtocolVersion2, DeviceTabletPlayer, TabletPlayerProfileID).Scan(
+		&assignment.DeviceID, &assignment.ProjectID, &assignment.Epoch, &assignment.State, &assignment.RuntimeSnapshotID,
+	)
+	return assignment, err
+}
 
 type TabletAssignmentInput struct {
 	DeviceID                 string
@@ -315,6 +336,9 @@ func (r *Repository) CommitTabletSafeAssignment(ctx context.Context, in Verified
 		return TabletAssignmentCommit{}, fmt.Errorf("record tablet assignment audit: %w", err)
 	}
 
+	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
+		return TabletAssignmentCommit{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return TabletAssignmentCommit{}, fmt.Errorf("commit tablet assignment: %w", err)
 	}

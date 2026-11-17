@@ -41,17 +41,17 @@ func TestCaptureExecutionEnvironmentAssetRequiresVerifiedVaultIdentity(t *testin
 		t.Fatal(err)
 	}
 
-	if _, err := s.CaptureExecutionEnvironmentAsset(ctx, created.ID, "missing", contentHash, sizeBytes); !errors.Is(err, domain.ErrNotFound) {
+	if _, err := s.CaptureExecutionEnvironmentAsset(ctx, created.ID, "missing", contentHash, sizeBytes, created.ContentSHA256); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("unknown asset err=%v", err)
 	}
-	if _, err := s.CaptureExecutionEnvironmentAsset(ctx, created.ID, "workspace", strings.Repeat("c", 64), sizeBytes); !errors.Is(err, domain.ErrConflict) {
+	if _, err := s.CaptureExecutionEnvironmentAsset(ctx, created.ID, "workspace", strings.Repeat("c", 64), sizeBytes, created.ContentSHA256); !errors.Is(err, domain.ErrConflict) {
 		t.Fatalf("missing Vault object err=%v", err)
 	}
-	if _, err := s.CaptureExecutionEnvironmentAsset(ctx, created.ID, "workspace", contentHash, sizeBytes+1); !errors.Is(err, domain.ErrConflict) {
+	if _, err := s.CaptureExecutionEnvironmentAsset(ctx, created.ID, "workspace", contentHash, sizeBytes+1, created.ContentSHA256); !errors.Is(err, domain.ErrConflict) {
 		t.Fatalf("Vault size mismatch err=%v", err)
 	}
 
-	updated, err := s.CaptureExecutionEnvironmentAsset(ctx, created.ID, "workspace", contentHash, sizeBytes)
+	updated, err := s.CaptureExecutionEnvironmentAsset(ctx, created.ID, "workspace", contentHash, sizeBytes, created.ContentSHA256)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +73,7 @@ func TestCaptureExecutionEnvironmentAssetRequiresVerifiedVaultIdentity(t *testin
 	if err := s.SetRevisionStatus(ctx, revision.ID, domain.RevisionValidated); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.CaptureExecutionEnvironmentAsset(ctx, created.ID, "workspace", contentHash, sizeBytes); !errors.Is(err, domain.ErrRevisionFrozen) {
+	if _, err := s.CaptureExecutionEnvironmentAsset(ctx, created.ID, "workspace", contentHash, sizeBytes, updated.ContentSHA256); !errors.Is(err, domain.ErrRevisionFrozen) {
 		t.Fatalf("frozen capture err=%v", err)
 	}
 }
@@ -118,13 +118,13 @@ func TestCaptureExecutionEnvironmentAssetSHOWLockPrecedesFrozenRevision(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.CaptureExecutionEnvironmentAsset(ctx, manifestID, "workspace", contentHash, sizeBytes); !errors.Is(err, domain.ErrShowConfigurationLocked) {
+	if _, err := s.CaptureExecutionEnvironmentAsset(ctx, manifestID, "workspace", contentHash, sizeBytes, manifestHash); !errors.Is(err, domain.ErrShowConfigurationLocked) {
 		t.Fatalf("SHOW capture err=%v", err)
 	}
 	if err := s.EndSession(ctx, show.ID, domain.SessionCompleted); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.CaptureExecutionEnvironmentAsset(ctx, manifestID, "workspace", contentHash, sizeBytes); !errors.Is(err, domain.ErrRevisionFrozen) {
+	if _, err := s.CaptureExecutionEnvironmentAsset(ctx, manifestID, "workspace", contentHash, sizeBytes, manifestHash); !errors.Is(err, domain.ErrRevisionFrozen) {
 		t.Fatalf("post-SHOW frozen capture err=%v", err)
 	}
 }

@@ -8,6 +8,7 @@ import (
 
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/executionenv"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
@@ -38,19 +39,29 @@ func registerOperatorExecutionEnvironmentRebuildPlanRoutes(
 	mux *http.ServeMux,
 	auth *userauth.Service,
 	stageStore *store.Store,
+	hooks executionEnvironmentReadHooks,
 ) {
 	path := "/api/v1/projects/{project_id}/revisions/{revision_id}/execution-environments/{execution_environment_id}/rebuild-plan"
 
 	mux.HandleFunc("GET "+path, withPermission(auth, userauth.PermissionProjectRead, func(
-		w http.ResponseWriter, r *http.Request, _ userauth.Session,
+		w http.ResponseWriter, r *http.Request, session userauth.Session,
 	) {
-		environment, ok := loadRebuildPlanEnvironment(w, r, stageStore)
+		environment, ok := loadRebuildPlanEnvironment(w, r, stageStore, hooks)
 		if !ok {
 			return
 		}
 		plan, err := stageStore.GetExecutionEnvironmentRebuildPlan(r.Context(), environment.ID)
 		if err != nil {
+			if hooks.BeforeStoreErrorResponse != nil {
+				hooks.BeforeStoreErrorResponse("rebuild-plan-read")
+			}
+			if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+				return
+			}
 			writeExecutionEnvironmentRebuildPlanError(w, err, "EXECUTION_ENVIRONMENT_REBUILD_PLAN_UNAVAILABLE")
+			return
+		}
+		if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
 			return
 		}
 		writeJSON(w, http.StatusOK, makeExecutionEnvironmentRebuildPlanView(plan))
@@ -59,7 +70,7 @@ func registerOperatorExecutionEnvironmentRebuildPlanRoutes(
 	mux.HandleFunc("POST "+path+"/seed", withPermission(auth, userauth.PermissionProjectEdit, func(
 		w http.ResponseWriter, r *http.Request, session userauth.Session,
 	) {
-		environment, ok := loadRebuildPlanEnvironment(w, r, stageStore)
+		environment, ok := loadRebuildPlanEnvironment(w, r, stageStore, hooks)
 		if !ok {
 			return
 		}
@@ -76,6 +87,12 @@ func registerOperatorExecutionEnvironmentRebuildPlanRoutes(
 		}
 		source, err := stageStore.GetExecutionEnvironmentSnapshot(r.Context(), sourceID)
 		if err != nil {
+			if hooks.BeforeStoreErrorResponse != nil {
+				hooks.BeforeStoreErrorResponse("rebuild-plan-source-read")
+			}
+			if !recheckQualifiedProjectRoute(w, r) {
+				return
+			}
 			if errors.Is(err, domain.ErrNotFound) {
 				writeJSON(w, http.StatusNotFound, map[string]any{
 					"error_code": "EXECUTION_ENVIRONMENT_SNAPSHOT_NOT_FOUND",
@@ -85,6 +102,12 @@ func registerOperatorExecutionEnvironmentRebuildPlanRoutes(
 			writeExecutionEnvironmentRebuildPlanError(w, err, "EXECUTION_ENVIRONMENT_REBUILD_PLAN_SEED_FAILED")
 			return
 		}
+		if hooks.BeforeResponse != nil {
+			hooks.BeforeResponse("rebuild-plan-source-loaded")
+		}
+		if !recheckQualifiedProjectRoute(w, r) {
+			return
+		}
 		if source.EnvironmentManifestID != environment.ID || source.RevisionID != environment.RevisionID {
 			writeJSON(w, http.StatusNotFound, map[string]any{
 				"error_code": "EXECUTION_ENVIRONMENT_SNAPSHOT_NOT_FOUND",
@@ -92,30 +115,57 @@ func registerOperatorExecutionEnvironmentRebuildPlanRoutes(
 			return
 		}
 		if existing, err := stageStore.GetExecutionEnvironmentRebuildPlan(r.Context(), environment.ID); err == nil {
+			if hooks.BeforeResponse != nil {
+				hooks.BeforeResponse("rebuild-plan-existing")
+			}
+			if !recheckQualifiedProjectRoute(w, r) {
+				return
+			}
 			if r.URL.Query().Get("replace") != "true" {
 				writeJSON(w, http.StatusConflict, map[string]any{
-					"error_code": "EXECUTION_ENVIRONMENT_REBUILD_PLAN_EXISTS",
+					"error_code":      "EXECUTION_ENVIRONMENT_REBUILD_PLAN_EXISTS",
 					"rebuild_plan_id": existing.ID,
 				})
 				return
 			}
 		} else if !errors.Is(err, domain.ErrNotFound) {
+			if hooks.BeforeStoreErrorResponse != nil {
+				hooks.BeforeStoreErrorResponse("rebuild-plan-existing-read")
+			}
+			if !recheckQualifiedProjectRoute(w, r) {
+				return
+			}
 			writeExecutionEnvironmentRebuildPlanError(w, err, "EXECUTION_ENVIRONMENT_REBUILD_PLAN_SEED_FAILED")
 			return
 		}
 
 		seeded, err := executionenv.SeedAssistedRebuildPlan(source.Snapshot)
 		if err != nil {
+			if !recheckQualifiedProjectRoute(w, r) {
+				return
+			}
 			writeJSON(w, http.StatusBadRequest, map[string]any{
 				"error_code": "EXECUTION_ENVIRONMENT_REBUILD_PLAN_SOURCE_UNSUPPORTED",
 			})
 			return
 		}
 		stored, err := stageStore.UpsertExecutionEnvironmentRebuildPlan(
-			r.Context(), environment.ID, source.ID, seeded, session.User.ID,
+			projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit), environment.ID, source.ID, seeded, session.User.ID,
 		)
 		if err != nil {
+			if hooks.BeforeStoreErrorResponse != nil {
+				hooks.BeforeStoreErrorResponse("rebuild-plan-seed-write")
+			}
+			if !recheckQualifiedProjectRoute(w, r) {
+				return
+			}
 			writeExecutionEnvironmentRebuildPlanError(w, err, "EXECUTION_ENVIRONMENT_REBUILD_PLAN_SEED_FAILED")
+			return
+		}
+		if hooks.BeforeResponse != nil {
+			hooks.BeforeResponse("rebuild-plan-seed")
+		}
+		if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit) {
 			return
 		}
 		writeJSON(w, http.StatusCreated, makeExecutionEnvironmentRebuildPlanView(stored))
@@ -124,7 +174,7 @@ func registerOperatorExecutionEnvironmentRebuildPlanRoutes(
 	mux.HandleFunc("PUT "+path, withPermission(auth, userauth.PermissionProjectEdit, func(
 		w http.ResponseWriter, r *http.Request, session userauth.Session,
 	) {
-		environment, ok := loadRebuildPlanEnvironment(w, r, stageStore)
+		environment, ok := loadRebuildPlanEnvironment(w, r, stageStore, hooks)
 		if !ok {
 			return
 		}
@@ -140,19 +190,31 @@ func registerOperatorExecutionEnvironmentRebuildPlanRoutes(
 			return
 		}
 		stored, err := stageStore.UpsertExecutionEnvironmentRebuildPlan(
-			r.Context(), environment.ID, sourceID, body.Plan, session.User.ID,
+			projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit), environment.ID, sourceID, body.Plan, session.User.ID,
 		)
 		if err != nil {
+			if hooks.BeforeStoreErrorResponse != nil {
+				hooks.BeforeStoreErrorResponse("rebuild-plan-update-write")
+			}
+			if !recheckQualifiedProjectRoute(w, r) {
+				return
+			}
 			writeExecutionEnvironmentRebuildPlanError(w, err, "EXECUTION_ENVIRONMENT_REBUILD_PLAN_UPDATE_FAILED")
+			return
+		}
+		if hooks.BeforeResponse != nil {
+			hooks.BeforeResponse("rebuild-plan-update")
+		}
+		if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit) {
 			return
 		}
 		writeJSON(w, http.StatusOK, makeExecutionEnvironmentRebuildPlanView(stored))
 	}))
 
 	mux.HandleFunc("DELETE "+path, withPermission(auth, userauth.PermissionProjectEdit, func(
-		w http.ResponseWriter, r *http.Request, _ userauth.Session,
+		w http.ResponseWriter, r *http.Request, session userauth.Session,
 	) {
-		environment, ok := loadRebuildPlanEnvironment(w, r, stageStore)
+		environment, ok := loadRebuildPlanEnvironment(w, r, stageStore, hooks)
 		if !ok {
 			return
 		}
@@ -162,8 +224,20 @@ func registerOperatorExecutionEnvironmentRebuildPlanRoutes(
 			})
 			return
 		}
-		if err := stageStore.DeleteExecutionEnvironmentRebuildPlan(r.Context(), environment.ID); err != nil {
+		if err := stageStore.DeleteExecutionEnvironmentRebuildPlan(projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit), environment.ID); err != nil {
+			if hooks.BeforeStoreErrorResponse != nil {
+				hooks.BeforeStoreErrorResponse("rebuild-plan-delete-write")
+			}
+			if !recheckQualifiedProjectRoute(w, r) {
+				return
+			}
 			writeExecutionEnvironmentRebuildPlanError(w, err, "EXECUTION_ENVIRONMENT_REBUILD_PLAN_DELETE_FAILED")
+			return
+		}
+		if hooks.BeforeResponse != nil {
+			hooks.BeforeResponse("rebuild-plan-delete")
+		}
+		if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit) {
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -174,6 +248,7 @@ func loadRebuildPlanEnvironment(
 	w http.ResponseWriter,
 	r *http.Request,
 	stageStore *store.Store,
+	hooks executionEnvironmentReadHooks,
 ) (store.ExecutionEnvironmentManifest, bool) {
 	_, revision, ok := loadExecutionEnvironmentRevision(w, r, stageStore)
 	if !ok {
@@ -182,10 +257,22 @@ func loadRebuildPlanEnvironment(
 	environmentID := strings.TrimSpace(r.PathValue("execution_environment_id"))
 	environment, err := stageStore.GetExecutionEnvironmentManifest(r.Context(), environmentID)
 	if err != nil {
+		if hooks.BeforeStoreErrorResponse != nil {
+			hooks.BeforeStoreErrorResponse("rebuild-plan-environment")
+		}
+		if !recheckQualifiedProjectRoute(w, r) {
+			return store.ExecutionEnvironmentManifest{}, false
+		}
 		writeExecutionEnvironmentRebuildPlanError(w, err, "EXECUTION_ENVIRONMENT_REBUILD_PLAN_UNAVAILABLE")
 		return store.ExecutionEnvironmentManifest{}, false
 	}
 	if environment.RevisionID != revision.ID {
+		if hooks.BeforeResponse != nil {
+			hooks.BeforeResponse("rebuild-plan-environment-mismatch")
+		}
+		if !recheckQualifiedProjectRoute(w, r) {
+			return store.ExecutionEnvironmentManifest{}, false
+		}
 		writeJSON(w, http.StatusNotFound, map[string]any{
 			"error_code": "EXECUTION_ENVIRONMENT_NOT_FOUND",
 		})
@@ -212,6 +299,9 @@ func makeExecutionEnvironmentRebuildPlanView(
 }
 
 func writeExecutionEnvironmentRebuildPlanError(w http.ResponseWriter, err error, fallback string) {
+	if writeProjectMutationDenied(w, err) {
+		return
+	}
 	switch {
 	case errors.Is(err, domain.ErrShowConfigurationLocked):
 		writeJSON(w, http.StatusLocked, map[string]any{"error_code": "SHOW_CONFIGURATION_LOCKED"})

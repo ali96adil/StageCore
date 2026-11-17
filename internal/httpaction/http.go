@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/ali96adil/StageCore/internal/capability"
@@ -143,13 +144,27 @@ func (e *Executor) Execute(ctx context.Context, req capability.Request) capabili
 		return *result
 	}
 
-	response, err := e.client.Do(httpReq)
+	transport := e.client.Transport
+	if transport == nil {
+		transport = http.DefaultTransport
+	}
+	client := *e.client
+	var transportAttempts atomic.Int32
+	client.Transport = dispatchCheckingRoundTripper{next: transport, attempts: &transportAttempts}
+	response, err := client.Do(httpReq)
 	if err != nil {
 		switch {
 		case errors.Is(execCtx.Err(), context.DeadlineExceeded):
-			return capability.Result{Result: domain.ExecutionTimedOut, AckLevel: contracts.AckNone, ErrorCode: "HTTP_TIMEOUT", ResponseSummary: "HTTP Action exceeded its bounded timeout"}
+			return capability.Result{Result: domain.ExecutionTimedOut, AckLevel: contracts.AckNone, ErrorCode: "HTTP_TIMEOUT", ResponseSummary: "HTTP Action exceeded its bounded timeout", DispatchNotAttempted: transportAttempts.Load() == 0}
 		case errors.Is(execCtx.Err(), context.Canceled):
-			return capability.Result{Result: domain.ExecutionCancelled, AckLevel: contracts.AckNone, ErrorCode: "HTTP_CANCELLED", ResponseSummary: "HTTP Action was cancelled"}
+			return capability.Result{Result: domain.ExecutionCancelled, AckLevel: contracts.AckNone, ErrorCode: "HTTP_CANCELLED", ResponseSummary: "HTTP Action was cancelled", DispatchNotAttempted: transportAttempts.Load() == 0}
+		case errors.Is(err, capability.ErrDispatchAuthorityRevoked):
+			return capability.Result{
+				Result: domain.ExecutionFailed, AckLevel: contracts.AckNone,
+				ErrorCode:            capability.DispatchAuthorityRevokedCode,
+				ResponseSummary:      "HTTP Action authority ended before network dispatch",
+				DispatchNotAttempted: transportAttempts.Load() == 0,
+			}
 		default:
 			return failure("HTTP_TRANSPORT_FAILED", "HTTP request failed before a response was received")
 		}
@@ -161,6 +176,21 @@ func (e *Executor) Execute(ctx context.Context, req capability.Request) capabili
 		return capability.Result{Result: domain.ExecutionCompleted, AckLevel: contracts.AckAccepted, ResponseSummary: summary}
 	}
 	return capability.Result{Result: domain.ExecutionFailed, AckLevel: contracts.AckAccepted, ErrorCode: fmt.Sprintf("HTTP_STATUS_%d", response.StatusCode), ResponseSummary: summary}
+}
+
+type dispatchCheckingRoundTripper struct {
+	next     http.RoundTripper
+	attempts *atomic.Int32
+}
+
+func (t dispatchCheckingRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
+	if err := capability.CheckDispatch(request.Context()); err != nil {
+		return nil, err
+	}
+	if t.attempts != nil {
+		t.attempts.Add(1)
+	}
+	return t.next.RoundTrip(request)
 }
 
 func (e *Executor) applySecret(ctx context.Context, request *http.Request, target targetConfig) *capability.Result {

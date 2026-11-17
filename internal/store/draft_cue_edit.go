@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/ali96adil/StageCore/internal/capability"
 	"strings"
 
 	"github.com/ali96adil/StageCore/internal/domain"
@@ -75,6 +76,10 @@ func (s *Store) ReplaceDraftCue(ctx context.Context, cue domain.Cue, actions []d
 	}
 	if !belongs {
 		return domain.Cue{}, domain.ErrNotFound
+	}
+	beforeHistory, err := readCueDraftStateTx(ctx, tx, cue.RevisionID, "")
+	if err != nil {
+		return domain.Cue{}, err
 	}
 
 	existingActionIDs := make(map[string]struct{})
@@ -164,11 +169,48 @@ func (s *Store) ReplaceDraftCue(ctx context.Context, cue domain.Cue, actions []d
 		action.ErrorPolicy = json.RawMessage(errorPolicy)
 		cue.Actions = append(cue.Actions, action)
 	}
+	afterHistory, err := readCueDraftStateTx(ctx, tx, cue.RevisionID, "")
+	if err != nil {
+		return domain.Cue{}, err
+	}
+	if err := recordCueDraftHistoryTx(ctx, tx, cue.RevisionID, "EDIT", cue.ID, beforeHistory, afterHistory, cueDraftHistoryTimestamp(s.clock)); err != nil {
+		return domain.Cue{}, err
+	}
+	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
+		return domain.Cue{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return domain.Cue{}, fmt.Errorf("commit replace cue: %w", err)
 	}
 	cue.ExecutionPolicy = json.RawMessage(policy)
 	return cue, nil
+}
+
+// ErrDraftCueLinked indicates that a surviving Cue still references the Cue.
+var ErrDraftCueLinked = fmt.Errorf("%w: Cue is a linked child", domain.ErrConflict)
+
+func draftCueHasParent(ctx context.Context, tx *sql.Tx, revisionID, cueID string) (bool, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT link.value FROM cues AS parent
+		JOIN json_each(parent.execution_policy_json, '$.linked_cue_ids') AS link
+		WHERE parent.revision_id = ? AND parent.cue_id <> ?
+		  AND json_type(parent.execution_policy_json, '$.linked_cue_ids') = 'array'
+		  AND link.type = 'text'
+	`, revisionID, cueID)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var linkedID string
+		if err := rows.Scan(&linkedID); err != nil {
+			return false, err
+		}
+		if strings.TrimSpace(linkedID) == cueID {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
 
 func (s *Store) DeleteDraftCue(ctx context.Context, revisionID, cueID string) error {
@@ -187,8 +229,29 @@ func (s *Store) DeleteDraftCue(ctx context.Context, revisionID, cueID string) er
 	if !belongs {
 		return domain.ErrNotFound
 	}
+	linked, err := draftCueHasParent(ctx, tx, revisionID, cueID)
+	if err != nil {
+		return fmt.Errorf("check incoming Cue links: %w", err)
+	}
+	if linked {
+		return ErrDraftCueLinked
+	}
+	beforeHistory, err := readCueDraftStateTx(ctx, tx, revisionID, cueID)
+	if err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM cues WHERE cue_id = ? AND revision_id = ?`, cueID, revisionID); err != nil {
 		return fmt.Errorf("delete cue: %w", err)
+	}
+	afterHistory, err := readCueDraftStateTx(ctx, tx, revisionID, cueID)
+	if err != nil {
+		return err
+	}
+	if err := recordCueDraftHistoryTx(ctx, tx, revisionID, "DELETE", cueID, beforeHistory, afterHistory, cueDraftHistoryTimestamp(s.clock)); err != nil {
+		return err
+	}
+	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
+		return err
 	}
 	return tx.Commit()
 }

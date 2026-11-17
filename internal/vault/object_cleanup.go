@@ -15,6 +15,8 @@ func (v *Vault) RemoveObjectIfUnreferenced(ctx context.Context, contentHash stri
 	if v == nil || v.store == nil {
 		return false, fmt.Errorf("Vault is unavailable")
 	}
+	v.objectMu.Lock()
+	defer v.objectMu.Unlock()
 	object, removed, err := v.store.DeleteVaultObjectIfUnreferenced(ctx, contentHash)
 	if err != nil || !removed {
 		return removed, err

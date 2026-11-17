@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/lightingnode"
 )
 
@@ -331,6 +332,9 @@ func (r *Repository) CommitLightingActivation(
 		challengeHex, in.ConfigurationHash, nowUS)
 	if err != nil {
 		return LightingActivationCommit{}, fmt.Errorf("record lighting activation audit: %w", err)
+	}
+	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
+		return LightingActivationCommit{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return LightingActivationCommit{}, fmt.Errorf("commit lighting activation: %w", err)

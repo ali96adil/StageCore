@@ -196,3 +196,21 @@ A StageCore feature is not operator-complete unless:
 ## Definition of complete
 
 F-002 should not be checked complete merely because the foundation exists. It remains a cross-cutting acceptance rule until the implemented StageCore operator workflows have compliant simple paths and the major raw-configuration gaps have visual alternatives.
+
+### Cue Studio recovery
+
+Cue Studio keeps one private recovery copy per account and project on the Hub.
+Open the same Cue with the same baseline to recover it, then use the regular
+Save action to write the authored Draft. Recovery can include unfinished raw
+JSON. An existing recovery copy for another Cue or baseline requires an
+explicit discard before this editor can replace it. A generation token
+protects the copy against stale updates and deletes from another tab.
+
+The editor shows when recovery is saved. During an interruption, keep the
+editor open until it reconnects and acknowledges recovery. Closing the tab
+before a change reaches the Hub can lose that change.
+
+Open **Action presets**, copy a valid action and save it with a name. Presets
+belong to the current account and project. Inserting one creates a new action
+in the editor with no copied action ID. The authored Cue changes only when
+saved through the normal Draft controls.

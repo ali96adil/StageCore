@@ -226,6 +226,7 @@ public struct CompanionExecutionRequest: Codable, Sendable, Equatable {
     public let capability: String
     public let parameters: [String: JSONValue]
     public let timeoutMS: Int64
+    public let applicationACK: SignedApplicationDispatch?
 
     enum CodingKeys: String, CodingKey {
         case type
@@ -238,6 +239,7 @@ public struct CompanionExecutionRequest: Codable, Sendable, Equatable {
         case capability
         case parameters
         case timeoutMS = "timeout_ms"
+        case applicationACK = "application_ack"
     }
 
     public init(
@@ -249,7 +251,8 @@ public struct CompanionExecutionRequest: Codable, Sendable, Equatable {
         runtimeSnapshotID: String,
         capability: String,
         parameters: [String: JSONValue],
-        timeoutMS: Int64
+        timeoutMS: Int64,
+        applicationACK: SignedApplicationDispatch? = nil
     ) {
         self.type = .executionRequest
         self.schemaVersion = schemaVersion
@@ -261,6 +264,7 @@ public struct CompanionExecutionRequest: Codable, Sendable, Equatable {
         self.capability = capability
         self.parameters = parameters
         self.timeoutMS = timeoutMS
+        self.applicationACK = applicationACK
     }
 }
 
@@ -290,6 +294,7 @@ public struct CompanionExecutionResult: Codable, Sendable, Equatable {
     public let errorCode: String?
     public let responseSummary: String
     public let output: [String: JSONValue]
+    public let signedApplicationReceipts: [Data]?
 
     enum CodingKeys: String, CodingKey {
         case type
@@ -301,6 +306,7 @@ public struct CompanionExecutionResult: Codable, Sendable, Equatable {
         case errorCode = "error_code"
         case responseSummary = "response_summary"
         case output
+        case signedApplicationReceipts = "signed_application_receipts"
     }
 
     public init(
@@ -311,7 +317,8 @@ public struct CompanionExecutionResult: Codable, Sendable, Equatable {
         ackLevel: CompanionAckLevel,
         errorCode: String?,
         responseSummary: String,
-        output: [String: JSONValue] = [:]
+        output: [String: JSONValue] = [:],
+        signedApplicationReceipts: [Data]? = nil
     ) {
         self.type = .executionResult
         self.schemaVersion = schemaVersion
@@ -322,6 +329,7 @@ public struct CompanionExecutionResult: Codable, Sendable, Equatable {
         self.errorCode = errorCode
         self.responseSummary = responseSummary
         self.output = output
+        self.signedApplicationReceipts = signedApplicationReceipts
     }
 }
 

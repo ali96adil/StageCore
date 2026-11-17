@@ -49,6 +49,8 @@ func (v *Vault) ImportObject(ctx context.Context, r io.Reader) (store.VaultObjec
 	}
 
 	contentHash := hex.EncodeToString(hasher.Sum(nil))
+	v.objectMu.Lock()
+	defer v.objectMu.Unlock()
 	relativePath := objectRelativePath(contentHash)
 	objectPath := filepath.Join(v.root, filepath.FromSlash(relativePath))
 	if err := os.MkdirAll(filepath.Dir(objectPath), directoryMode); err != nil {

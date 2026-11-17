@@ -2,6 +2,11 @@ package runtimecontrol
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -9,17 +14,22 @@ import (
 	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/contracts"
 	"github.com/ali96adil/StageCore/internal/domain"
+	"github.com/ali96adil/StageCore/internal/httpaction"
+	"github.com/ali96adil/StageCore/internal/scriptaction"
 )
 
 type dispatchProbe struct {
-	calls atomic.Int32
+	calls   atomic.Int32
 	entered chan struct{}
 }
 
 func (p *dispatchProbe) Execute(ctx context.Context, _ capability.Request) capability.Result {
 	p.calls.Add(1)
 	if p.entered != nil {
-		select { case p.entered <- struct{}{}: default: }
+		select {
+		case p.entered <- struct{}{}:
+		default:
+		}
 		<-ctx.Done()
 		return capability.Result{
 			Result: domain.ExecutionCancelled, AckLevel: contracts.AckNone,
@@ -82,4 +92,252 @@ func TestStoppableExecutorCancelsAlreadyRunningAction(t *testing.T) {
 	if late.Result != domain.ExecutionCancelled || probe.calls.Load() != 1 {
 		t.Fatalf("late action dispatched despite stop: %+v calls=%d", late, probe.calls.Load())
 	}
+}
+
+func TestDispatchAuthorizationIsRecheckedForEveryAction(t *testing.T) {
+	probe := &dispatchProbe{}
+	executor := newStoppableExecutor(probe)
+	var revoked atomic.Bool
+	ctx := WithDispatchAuthorization(context.Background(), func(_ context.Context, req capability.Request) error {
+		if revoked.Load() || req.SessionID != "rehearsal" {
+			return context.Canceled
+		}
+		return nil
+	})
+	request := capability.Request{CorrelationID: "cue", ExecutionID: "first", SessionID: "rehearsal"}
+	if got := executor.Execute(ctx, request); got.Result != domain.ExecutionCompleted {
+		t.Fatalf("first: %+v", got)
+	}
+	revoked.Store(true)
+	request.ExecutionID = "delayed"
+	if got := executor.Execute(ctx, request); got.ErrorCode != "PROJECT_DISPATCH_AUTHORITY_REVOKED" || got.AckLevel != contracts.AckNone {
+		t.Fatalf("revoked: %+v", got)
+	}
+	if probe.calls.Load() != 1 {
+		t.Fatalf("revoked action reached adapter: %d", probe.calls.Load())
+	}
+}
+
+func TestHTTPActionRechecksDispatchAuthorityBeforeNetworkRequest(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	target, err := json.Marshal(map[string]string{"url": server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var checks atomic.Int32
+	ctx := WithDispatchAuthorization(context.Background(), func(context.Context, capability.Request) error {
+		if checks.Add(1) == 1 {
+			return nil // Runtime Control admits the Action.
+		}
+		return capability.ErrDispatchAuthorityRevoked // authority ends during adapter preparation.
+	})
+	executor := newStoppableExecutor(httpaction.NewWithClient(server.Client()))
+	result := executor.Execute(ctx, capability.Request{
+		ExecutionID: "http-action-revoked-before-write", ProjectID: "project-a",
+		SessionID: "show-a", RuntimeSnapshotID: "snapshot-a",
+		Capability: httpaction.CapabilityKey,
+		Target: &capability.Target{
+			Ref: "HTTP-OUT", LogicalType: "http", Configuration: target,
+		},
+		Parameters: json.RawMessage(`{"method":"POST"}`), TimeoutMS: 1000,
+	})
+	if checks.Load() != 2 {
+		t.Fatalf("dispatch authorization checks=%d, want admission plus transport-boundary recheck", checks.Load())
+	}
+	if result.ErrorCode != capability.DispatchAuthorityRevokedCode ||
+		result.Result != domain.ExecutionFailed || result.AckLevel != contracts.AckNone ||
+		!result.DispatchNotAttempted || requests.Load() != 0 {
+		t.Fatalf("revoked HTTP Action reached network or returned an unsafe result: result=%+v requests=%d", result, requests.Load())
+	}
+}
+
+func TestHTTPActionRechecksDispatchAuthorityBeforeRedirectFollowup(t *testing.T) {
+	var redirectedRequests atomic.Int32
+	redirected := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		redirectedRequests.Add(1)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer redirected.Close()
+	var initialRequests atomic.Int32
+	initial := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		initialRequests.Add(1)
+		http.Redirect(w, r, redirected.URL+"/followup", http.StatusTemporaryRedirect)
+	}))
+	defer initial.Close()
+
+	target, err := json.Marshal(map[string]string{"url": initial.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var checks atomic.Int32
+	ctx := WithDispatchAuthorization(context.Background(), func(context.Context, capability.Request) error {
+		if checks.Add(1) <= 2 {
+			return nil // Runtime Control and the initial HTTP request are authorized.
+		}
+		return capability.ErrDispatchAuthorityRevoked
+	})
+	executor := newStoppableExecutor(httpaction.NewWithClient(initial.Client()))
+	result := executor.Execute(ctx, capability.Request{
+		ExecutionID: "http-action-revoked-before-redirect", ProjectID: "project-a",
+		SessionID: "show-a", RuntimeSnapshotID: "snapshot-a",
+		Capability: httpaction.CapabilityKey,
+		Target: &capability.Target{
+			Ref: "HTTP-OUT", LogicalType: "http", Configuration: target,
+		},
+		Parameters: json.RawMessage(`{"method":"POST"}`), TimeoutMS: 1000,
+	})
+	if checks.Load() != 3 || initialRequests.Load() != 1 || redirectedRequests.Load() != 0 {
+		t.Fatalf("redirect dispatch crossed revoked authority: checks=%d initial=%d redirected=%d", checks.Load(), initialRequests.Load(), redirectedRequests.Load())
+	}
+	if result.ErrorCode != capability.DispatchAuthorityRevokedCode || result.Result != domain.ExecutionFailed ||
+		result.AckLevel != contracts.AckNone || result.DispatchNotAttempted {
+		t.Fatalf("redirect revocation did not preserve the already-attempted first request: %+v", result)
+	}
+}
+
+func TestHTTPActionSuppressesResultAfterDispatchAuthorityRevocation(t *testing.T) {
+	requestReceived := make(chan struct{})
+	releaseResponse := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseResponse) }) }
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		close(requestReceived)
+		<-releaseResponse
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer server.Close()
+	defer release()
+
+	target, err := json.Marshal(map[string]string{"url": server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var revoked atomic.Bool
+	var checks atomic.Int32
+	ctx := WithDispatchAuthorization(context.Background(), func(context.Context, capability.Request) error {
+		checks.Add(1)
+		if revoked.Load() {
+			return capability.ErrDispatchAuthorityRevoked
+		}
+		return nil
+	})
+	executor := newStoppableExecutor(httpaction.NewWithClient(server.Client()))
+	resultCh := make(chan capability.Result, 1)
+	go func() {
+		resultCh <- executor.Execute(ctx, capability.Request{
+			ExecutionID: "http-action-revoked-before-result", ProjectID: "project-a",
+			SessionID: "show-a", RuntimeSnapshotID: "snapshot-a", CorrelationID: "cue-a",
+			Capability: httpaction.CapabilityKey,
+			Target: &capability.Target{
+				Ref: "HTTP-OUT", LogicalType: "http", Configuration: target,
+			},
+			Parameters: json.RawMessage(`{"method":"POST"}`), TimeoutMS: 2000,
+		})
+	}()
+	select {
+	case <-requestReceived:
+	case <-time.After(2 * time.Second):
+		t.Fatal("HTTP Action did not reach the local test server")
+	}
+	revoked.Store(true)
+	release()
+	var result capability.Result
+	select {
+	case result = <-resultCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("HTTP Action did not return after the local response")
+	}
+	if result.Result != domain.ExecutionFailed || result.ErrorCode != capability.DispatchAuthorityRevokedCode ||
+		result.AckLevel != contracts.AckAccepted || result.DispatchNotAttempted {
+		t.Fatalf("result suppression misreported the already-attempted HTTP Action: %+v", result)
+	}
+	if result.ResponseSummary != "Cue action may have completed; result withheld after project authority ended" {
+		t.Fatalf("revoked caller received an adapter result instead of the generic outcome: %+v", result)
+	}
+	if checks.Load() < 3 {
+		t.Fatalf("dispatch authority checks=%d, want admission, network dispatch, and result delivery", checks.Load())
+	}
+}
+
+func TestScriptActionStopsRunningChildAfterDispatchAuthorityRevocation(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	completedMarker := t.TempDir() + "/script-completed.txt"
+	target, err := json.Marshal(map[string]any{
+		"executable": executable,
+		"arguments":  []string{"-test.run=TestRuntimeControlScriptHelperWaitForAuthorityRevocation", "--", completedMarker},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var revoked atomic.Bool
+	ctx := WithDispatchAuthorization(context.Background(), func(context.Context, capability.Request) error {
+		if revoked.Load() {
+			return capability.ErrDispatchAuthorityRevoked
+		}
+		return nil
+	})
+	executor := newStoppableExecutor(scriptaction.New())
+	resultCh := make(chan capability.Result, 1)
+	go func() {
+		resultCh <- executor.Execute(ctx, capability.Request{
+			ExecutionID: "script-action-revoked-in-flight", ProjectID: "project-a",
+			SessionID: "show-a", RuntimeSnapshotID: "snapshot-a", CorrelationID: "cue-script",
+			Capability: scriptaction.CapabilityKey,
+			Target:     &capability.Target{Ref: "SCRIPT-LOCAL", LogicalType: "script", Configuration: target},
+			Parameters: json.RawMessage(`{}`), TimeoutMS: 2000,
+		})
+	}()
+	startedMarker := completedMarker + ".started"
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, err := os.Stat(startedMarker); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("Script child did not start its local helper")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	revoked.Store(true)
+	var result capability.Result
+	select {
+	case result = <-resultCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Script Action did not stop after authority revocation")
+	}
+	if result.Result != domain.ExecutionFailed || result.ErrorCode != capability.DispatchAuthorityRevokedCode ||
+		result.AckLevel != contracts.AckAccepted || result.DispatchNotAttempted {
+		t.Fatalf("in-flight Script Action result lost its attempted-dispatch semantics: %+v", result)
+	}
+	if _, err := os.Stat(completedMarker); !os.IsNotExist(err) {
+		t.Fatalf("Script child continued its side effect after authority revocation; stat error=%v", err)
+	}
+}
+
+func TestRuntimeControlScriptHelperWaitForAuthorityRevocation(t *testing.T) {
+	completedMarker, ok := runtimeControlHelperMarker()
+	if !ok {
+		return
+	}
+	_ = os.WriteFile(completedMarker+".started", []byte("started"), 0o600)
+	time.Sleep(400 * time.Millisecond)
+	_ = os.WriteFile(completedMarker, []byte("completed"), 0o600)
+}
+
+func runtimeControlHelperMarker() (string, bool) {
+	for index, value := range os.Args {
+		if value == "--" && index+1 < len(os.Args) {
+			return os.Args[index+1], true
+		}
+	}
+	return "", false
 }

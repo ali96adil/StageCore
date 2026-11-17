@@ -274,6 +274,18 @@ func (s *RuntimeService) observeNormalized(ctx context.Context, sessionID string
 		if decision.State != DecisionFire || decision.Command == nil {
 			continue
 		}
+		if session.ManagedOutputBlackout {
+			reason := "managed output blackout is active"
+			result.Decisions[i] = Decision{State: DecisionInhibited, BindingID: decision.BindingID, Reason: reason}
+			if err := s.record(ctx, &session.ID, session.ProjectID, session.RuntimeSnapshotID, "timecode.binding.inhibited", map[string]any{
+				"binding_id": decision.BindingID,
+				"cue_id":     decision.Command.CueID,
+				"reason":     reason,
+			}); err != nil {
+				return result, err
+			}
+			continue
+		}
 		nextCue := nextEnabledCueID(manifest, session.CurrentCueID)
 		if nextCue == "" || nextCue != decision.Command.CueID {
 			result.Decisions[i] = Decision{
@@ -282,8 +294,8 @@ func (s *RuntimeService) observeNormalized(ctx context.Context, sessionID string
 				Reason:    "bound cue is not the next enabled cue",
 			}
 			if err := s.record(ctx, &session.ID, session.ProjectID, session.RuntimeSnapshotID, "timecode.binding.inhibited", map[string]any{
-				"binding_id": decision.BindingID,
-				"cue_id":     decision.Command.CueID,
+				"binding_id":  decision.BindingID,
+				"cue_id":      decision.Command.CueID,
 				"next_cue_id": nextCue,
 				"reason":      "bound cue is not the next enabled cue",
 			}); err != nil {

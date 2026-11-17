@@ -3,7 +3,9 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -51,6 +53,18 @@ func TestAssistantProposalAtomicBatchCommitsGraphAndResolvesCueRef(t *testing.T)
 	}
 	if len(cues) != 1 || len(routes) != 1 || len(routes[0].Actions) != 1 || routes[0].Actions[0].CueID == nil || *routes[0].Actions[0].CueID != cues[0].ID {
 		t.Fatalf("cues=%+v routes=%+v", cues, routes)
+	}
+	historyContext := store.WithCueDraftHistoryActor(ctx, h.owner.Session.User.ID)
+	history, err := h.stageStore.CueDraftHistory(historyContext, h.project.ID)
+	if err != nil || !history.CanUndo {
+		t.Fatalf("atomic batch Cue history=%+v err=%v", history, err)
+	}
+	if _, err := h.stageStore.UndoCueDraft(historyContext, h.project.ID); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("Undo removed a Cue that the new Route references: %v", err)
+	}
+	cuesAfterConflict, err := h.stageStore.ListCues(ctx, h.revision.ID)
+	if err != nil || len(cuesAfterConflict) != 1 || cuesAfterConflict[0].ID != cues[0].ID {
+		t.Fatalf("conflicted Undo changed Cue state: cues=%+v err=%v", cuesAfterConflict, err)
 	}
 }
 
@@ -150,5 +164,37 @@ func TestAssistantProposalAtomicBatchShowLockBlocksMixedNoteAndStructuralMutatio
 	}
 	if len(notes) != 0 || len(aliases) != 0 {
 		t.Fatalf("SHOW-rejected batch mutated notes=%+v aliases=%+v", notes, aliases)
+	}
+}
+
+func TestAssistantProposalBatchRejectsRevokedBrowserSession(t *testing.T) {
+	h := newAssistantProposalHTTPHarness(t)
+	ctx := context.Background()
+	sealed := h.preview(h.owner, assistant.DraftProposal{
+		BaseRevisionID: h.revision.ID,
+		Operations: []assistant.ProposalOperation{
+			{Kind: assistant.ProposalNoteDraft, Summary: "Add one", Payload: json.RawMessage(`{"body":"one"}`)},
+			{Kind: assistant.ProposalNoteDraft, Summary: "Add two", Payload: json.RawMessage(`{"body":"two"}`)},
+		},
+	})
+	body, err := json.Marshal(assistantProposalBatchApplyRequest{Proposal: sealed, Apply: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := "/api/v1/projects/" + h.project.ID + "/assistant/proposals/apply-batch"
+	req := authenticatedMutationRequest(t, http.MethodPost, path, body, h.owner.Token, h.owner.CSRFToken)
+	req.Body = &firmwareUploadRevokeReader{ReadCloser: req.Body, revoke: func() {
+		if err := h.auth.auth.Logout(ctx, h.owner.Token); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	res := httptest.NewRecorder()
+	h.handler.ServeHTTP(res, req)
+	if res.Code != http.StatusForbidden {
+		t.Fatalf("revoked proposal batch returned %d: %s", res.Code, res.Body)
+	}
+	notes, err := h.stageStore.ListNotes(ctx, h.project.ID, store.NoteFilter{})
+	if err != nil || len(notes) != 0 {
+		t.Fatalf("revoked batch changed notes: %+v, %v", notes, err)
 	}
 }

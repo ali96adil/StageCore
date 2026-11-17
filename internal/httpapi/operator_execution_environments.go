@@ -8,6 +8,7 @@ import (
 
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/executionenv"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
@@ -25,46 +26,67 @@ type executionEnvironmentBindingRequest struct {
 }
 
 type executionEnvironmentView struct {
-	ID            string                `json:"execution_environment_id"`
-	RevisionID    string                `json:"revision_id"`
-	EnvironmentKey string               `json:"environment_key"`
-	Name          string                `json:"name"`
-	AdapterKey    string                `json:"adapter_key"`
-	ApplicationKey string               `json:"application_key"`
-	MachineRoleID *string               `json:"machine_role_id,omitempty"`
-	ContentSHA256 string                `json:"content_sha256"`
-	CreatedBy     string                `json:"created_by"`
-	CreatedAt     time.Time             `json:"created_at"`
-	Manifest      executionenv.Manifest `json:"manifest"`
+	ID             string                `json:"execution_environment_id"`
+	RevisionID     string                `json:"revision_id"`
+	EnvironmentKey string                `json:"environment_key"`
+	Name           string                `json:"name"`
+	AdapterKey     string                `json:"adapter_key"`
+	ApplicationKey string                `json:"application_key"`
+	MachineRoleID  *string               `json:"machine_role_id,omitempty"`
+	ContentSHA256  string                `json:"content_sha256"`
+	CreatedBy      string                `json:"created_by"`
+	CreatedAt      time.Time             `json:"created_at"`
+	Manifest       executionenv.Manifest `json:"manifest"`
+}
+
+type executionEnvironmentReadHooks struct {
+	BeforeStoreErrorResponse func(route string)
+	BeforeResponse           func(route string)
 }
 
 func WithOperatorExecutionEnvironments(auth *userauth.Service, stageStore *store.Store) Option {
+	return withOperatorExecutionEnvironments(auth, stageStore, executionEnvironmentReadHooks{})
+}
+
+func withOperatorExecutionEnvironments(auth *userauth.Service, stageStore *store.Store, hooks executionEnvironmentReadHooks) Option {
 	return func(s *Server) {
 		if auth == nil || stageStore == nil {
 			return
 		}
-		registerOperatorExecutionEnvironmentRoutes(s.mux, auth, stageStore)
-		registerOperatorExecutionEnvironmentSnapshotDiffRoutes(s.mux, auth, stageStore)
-		registerOperatorExecutionEnvironmentRebuildPlanRoutes(s.mux, auth, stageStore)
+		registerOperatorExecutionEnvironmentRoutes(s.mux, auth, stageStore, hooks)
+		registerOperatorExecutionEnvironmentSnapshotDiffRoutes(s.mux, auth, stageStore, hooks)
+		registerOperatorExecutionEnvironmentRebuildPlanRoutes(s.mux, auth, stageStore, hooks)
 	}
 }
 
-func registerOperatorExecutionEnvironmentRoutes(mux *http.ServeMux, auth *userauth.Service, stageStore *store.Store) {
+func registerOperatorExecutionEnvironmentRoutes(mux *http.ServeMux, auth *userauth.Service, stageStore *store.Store, hooks executionEnvironmentReadHooks) {
 	collection := "/api/v1/projects/{project_id}/revisions/{revision_id}/execution-environments"
 	item := collection + "/{execution_environment_id}"
 
-	mux.HandleFunc("GET "+collection, withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
-		project, revision, ok := loadExecutionEnvironmentRevision(w, r, stageStore)
+	mux.HandleFunc("GET "+collection, withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+		project, revision, ok := loadExecutionEnvironmentRevision(w, r, stageStore, hooks.BeforeStoreErrorResponse, hooks.BeforeResponse)
 		if !ok {
 			return
 		}
 		environments, err := stageStore.ListExecutionEnvironmentManifests(r.Context(), revision.ID)
 		if err != nil {
+			if hooks.BeforeStoreErrorResponse != nil {
+				hooks.BeforeStoreErrorResponse("environment-list")
+			}
+			if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+				return
+			}
 			writeExecutionEnvironmentStoreError(w, err, "EXECUTION_ENVIRONMENTS_UNAVAILABLE")
 			return
 		}
 		roles, err := stageStore.ListMachineRoles(r.Context(), project.ID)
 		if err != nil {
+			if hooks.BeforeStoreErrorResponse != nil {
+				hooks.BeforeStoreErrorResponse("environment-list-machine-roles")
+			}
+			if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+				return
+			}
 			writeExecutionEnvironmentStoreError(w, err, "EXECUTION_ENVIRONMENTS_UNAVAILABLE")
 			return
 		}
@@ -76,15 +98,18 @@ func registerOperatorExecutionEnvironmentRoutes(mux *http.ServeMux, auth *userau
 		for _, role := range roles {
 			roleViews = append(roleViews, makeMachineRoleView(role))
 		}
+		if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"revision":               makeRevisionView(revision),
 			"execution_environments": views,
-			"machine_roles":           roleViews,
+			"machine_roles":          roleViews,
 		})
 	}))
 
 	mux.HandleFunc("POST "+collection, withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
-		_, revision, ok := loadExecutionEnvironmentRevision(w, r, stageStore)
+		_, revision, ok := loadExecutionEnvironmentRevision(w, r, stageStore, hooks.BeforeStoreErrorResponse, hooks.BeforeResponse)
 		if !ok {
 			return
 		}
@@ -92,26 +117,50 @@ func registerOperatorExecutionEnvironmentRoutes(mux *http.ServeMux, auth *userau
 		if !decodeBoundedJSON(w, r, &body) {
 			return
 		}
-		created, err := stageStore.CreateExecutionEnvironmentManifest(r.Context(), revision.ID, body.Manifest, session.User.ID)
+		created, err := stageStore.CreateExecutionEnvironmentManifest(projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit), revision.ID, body.Manifest, session.User.ID)
 		if err != nil {
+			if hooks.BeforeStoreErrorResponse != nil {
+				hooks.BeforeStoreErrorResponse("environment-create-write")
+			}
+			if !recheckQualifiedProjectRoute(w, r) {
+				return
+			}
 			writeExecutionEnvironmentStoreError(w, err, "EXECUTION_ENVIRONMENT_CREATE_FAILED")
+			return
+		}
+		if hooks.BeforeResponse != nil {
+			hooks.BeforeResponse("environment-create")
+		}
+		if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit) {
 			return
 		}
 		writeJSON(w, http.StatusCreated, makeExecutionEnvironmentView(created))
 	}))
 
-	mux.HandleFunc("PUT "+item, withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
-		_, revision, ok := loadExecutionEnvironmentRevision(w, r, stageStore)
+	mux.HandleFunc("PUT "+item, withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+		_, revision, ok := loadExecutionEnvironmentRevision(w, r, stageStore, hooks.BeforeStoreErrorResponse, hooks.BeforeResponse)
 		if !ok {
 			return
 		}
 		environmentID := strings.TrimSpace(r.PathValue("execution_environment_id"))
 		existing, err := stageStore.GetExecutionEnvironmentManifest(r.Context(), environmentID)
 		if err != nil {
+			if hooks.BeforeStoreErrorResponse != nil {
+				hooks.BeforeStoreErrorResponse("environment-update-read")
+			}
+			if !recheckQualifiedProjectRoute(w, r) {
+				return
+			}
 			writeExecutionEnvironmentStoreError(w, err, "EXECUTION_ENVIRONMENT_UPDATE_FAILED")
 			return
 		}
 		if existing.RevisionID != revision.ID {
+			if hooks.BeforeResponse != nil {
+				hooks.BeforeResponse("environment-update-mismatch")
+			}
+			if !recheckQualifiedProjectRoute(w, r) {
+				return
+			}
 			writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "EXECUTION_ENVIRONMENT_NOT_FOUND"})
 			return
 		}
@@ -119,26 +168,50 @@ func registerOperatorExecutionEnvironmentRoutes(mux *http.ServeMux, auth *userau
 		if !decodeBoundedJSON(w, r, &body) {
 			return
 		}
-		updated, err := stageStore.UpdateExecutionEnvironmentManifest(r.Context(), environmentID, body.Manifest)
+		updated, err := stageStore.UpdateExecutionEnvironmentManifest(projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit), environmentID, body.Manifest)
 		if err != nil {
+			if hooks.BeforeStoreErrorResponse != nil {
+				hooks.BeforeStoreErrorResponse("environment-update-write")
+			}
+			if !recheckQualifiedProjectRoute(w, r) {
+				return
+			}
 			writeExecutionEnvironmentStoreError(w, err, "EXECUTION_ENVIRONMENT_UPDATE_FAILED")
+			return
+		}
+		if hooks.BeforeResponse != nil {
+			hooks.BeforeResponse("environment-update")
+		}
+		if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit) {
 			return
 		}
 		writeJSON(w, http.StatusOK, makeExecutionEnvironmentView(updated))
 	}))
 
-	mux.HandleFunc("PUT "+item+"/machine-role", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
-		_, revision, ok := loadExecutionEnvironmentRevision(w, r, stageStore)
+	mux.HandleFunc("PUT "+item+"/machine-role", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+		_, revision, ok := loadExecutionEnvironmentRevision(w, r, stageStore, hooks.BeforeStoreErrorResponse, hooks.BeforeResponse)
 		if !ok {
 			return
 		}
 		environmentID := strings.TrimSpace(r.PathValue("execution_environment_id"))
 		existing, err := stageStore.GetExecutionEnvironmentManifest(r.Context(), environmentID)
 		if err != nil {
+			if hooks.BeforeStoreErrorResponse != nil {
+				hooks.BeforeStoreErrorResponse("environment-bind-read")
+			}
+			if !recheckQualifiedProjectRoute(w, r) {
+				return
+			}
 			writeExecutionEnvironmentStoreError(w, err, "EXECUTION_ENVIRONMENT_BIND_FAILED")
 			return
 		}
 		if existing.RevisionID != revision.ID {
+			if hooks.BeforeResponse != nil {
+				hooks.BeforeResponse("environment-bind-mismatch")
+			}
+			if !recheckQualifiedProjectRoute(w, r) {
+				return
+			}
 			writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "EXECUTION_ENVIRONMENT_NOT_FOUND"})
 			return
 		}
@@ -146,16 +219,28 @@ func registerOperatorExecutionEnvironmentRoutes(mux *http.ServeMux, auth *userau
 		if !decodeBoundedJSON(w, r, &body) {
 			return
 		}
-		updated, err := stageStore.SetExecutionEnvironmentMachineRole(r.Context(), environmentID, body.MachineRoleID)
+		updated, err := stageStore.SetExecutionEnvironmentMachineRole(projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit, projectaccess.DeviceConfigure), environmentID, body.MachineRoleID)
 		if err != nil {
+			if hooks.BeforeStoreErrorResponse != nil {
+				hooks.BeforeStoreErrorResponse("environment-bind-write")
+			}
+			if !recheckQualifiedProjectRoute(w, r) {
+				return
+			}
 			writeExecutionEnvironmentStoreError(w, err, "EXECUTION_ENVIRONMENT_BIND_FAILED")
+			return
+		}
+		if hooks.BeforeResponse != nil {
+			hooks.BeforeResponse("environment-bind")
+		}
+		if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit, projectaccess.DeviceConfigure) {
 			return
 		}
 		writeJSON(w, http.StatusOK, makeExecutionEnvironmentView(updated))
 	}))
 
-	mux.HandleFunc("DELETE "+item, withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
-		_, revision, ok := loadExecutionEnvironmentRevision(w, r, stageStore)
+	mux.HandleFunc("DELETE "+item, withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+		_, revision, ok := loadExecutionEnvironmentRevision(w, r, stageStore, hooks.BeforeStoreErrorResponse, hooks.BeforeResponse)
 		if !ok {
 			return
 		}
@@ -166,39 +251,91 @@ func registerOperatorExecutionEnvironmentRoutes(mux *http.ServeMux, auth *userau
 		environmentID := strings.TrimSpace(r.PathValue("execution_environment_id"))
 		existing, err := stageStore.GetExecutionEnvironmentManifest(r.Context(), environmentID)
 		if err != nil {
+			if hooks.BeforeStoreErrorResponse != nil {
+				hooks.BeforeStoreErrorResponse("environment-delete-read")
+			}
+			if !recheckQualifiedProjectRoute(w, r) {
+				return
+			}
 			writeExecutionEnvironmentStoreError(w, err, "EXECUTION_ENVIRONMENT_DELETE_FAILED")
 			return
 		}
 		if existing.RevisionID != revision.ID {
+			if hooks.BeforeResponse != nil {
+				hooks.BeforeResponse("environment-delete-mismatch")
+			}
+			if !recheckQualifiedProjectRoute(w, r) {
+				return
+			}
 			writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "EXECUTION_ENVIRONMENT_NOT_FOUND"})
 			return
 		}
-		if err := stageStore.DeleteExecutionEnvironmentManifest(r.Context(), environmentID); err != nil {
+		if err := stageStore.DeleteExecutionEnvironmentManifest(projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit), environmentID); err != nil {
+			if hooks.BeforeStoreErrorResponse != nil {
+				hooks.BeforeStoreErrorResponse("environment-delete-write")
+			}
+			if !recheckQualifiedProjectRoute(w, r) {
+				return
+			}
 			writeExecutionEnvironmentStoreError(w, err, "EXECUTION_ENVIRONMENT_DELETE_FAILED")
+			return
+		}
+		if hooks.BeforeResponse != nil {
+			hooks.BeforeResponse("environment-delete")
+		}
+		if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit) {
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}))
 }
 
-func loadExecutionEnvironmentRevision(w http.ResponseWriter, r *http.Request, stageStore *store.Store) (domain.Project, domain.ProjectRevision, bool) {
+func loadExecutionEnvironmentRevision(w http.ResponseWriter, r *http.Request, stageStore *store.Store, hooks ...func(string)) (domain.Project, domain.ProjectRevision, bool) {
 	projectID := strings.TrimSpace(r.PathValue("project_id"))
 	revisionID := strings.TrimSpace(r.PathValue("revision_id"))
 	project, err := stageStore.GetProject(r.Context(), projectID)
 	if err != nil {
+		if len(hooks) > 0 && hooks[0] != nil {
+			hooks[0]("revision-project")
+		}
+		if !recheckQualifiedProjectRoute(w, r) {
+			return domain.Project{}, domain.ProjectRevision{}, false
+		}
 		writeExecutionEnvironmentStoreError(w, err, "EXECUTION_ENVIRONMENTS_UNAVAILABLE")
 		return domain.Project{}, domain.ProjectRevision{}, false
 	}
 	revision, err := stageStore.GetRevision(r.Context(), revisionID)
 	if err != nil {
+		if len(hooks) > 0 && hooks[0] != nil {
+			hooks[0]("revision")
+		}
+		if !recheckQualifiedProjectRoute(w, r) {
+			return domain.Project{}, domain.ProjectRevision{}, false
+		}
 		writeExecutionEnvironmentStoreError(w, err, "EXECUTION_ENVIRONMENTS_UNAVAILABLE")
 		return domain.Project{}, domain.ProjectRevision{}, false
 	}
 	if revision.ProjectID != project.ID {
+		if len(hooks) > 1 && hooks[1] != nil {
+			hooks[1]("revision-mismatch")
+		}
+		if !recheckQualifiedProjectRoute(w, r) {
+			return domain.Project{}, domain.ProjectRevision{}, false
+		}
 		writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "EXECUTION_ENVIRONMENT_REVISION_NOT_FOUND"})
 		return domain.Project{}, domain.ProjectRevision{}, false
 	}
 	return project, revision, true
+}
+
+func recheckQualifiedProjectRoute(w http.ResponseWriter, r *http.Request) bool {
+	grant, ok := r.Context().Value(projectRouteGrantKey{}).(projectRouteGrant)
+	if !ok || grant.access == nil {
+		return true
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	_, err := currentProjectRouteGrant(r)
+	return writeProjectQualificationError(w, err)
 }
 
 func makeExecutionEnvironmentView(environment store.ExecutionEnvironmentManifest) executionEnvironmentView {
@@ -212,6 +349,9 @@ func makeExecutionEnvironmentView(environment store.ExecutionEnvironmentManifest
 }
 
 func writeExecutionEnvironmentStoreError(w http.ResponseWriter, err error, fallback string) {
+	if writeProjectMutationDenied(w, err) {
+		return
+	}
 	switch {
 	case errors.Is(err, domain.ErrShowConfigurationLocked):
 		writeJSON(w, http.StatusLocked, map[string]any{"error_code": "SHOW_CONFIGURATION_LOCKED"})

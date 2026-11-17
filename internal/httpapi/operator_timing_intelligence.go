@@ -2,11 +2,14 @@ package httpapi
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/domain"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/timingintelligence"
 	"github.com/ali96adil/StageCore/internal/userauth"
@@ -15,10 +18,21 @@ import (
 type TimingIntelligenceService interface {
 	Report(context.Context, string, timingintelligence.ReportOptions) (timingintelligence.Report, error)
 	SetSessionSelection(context.Context, string, string, store.TimingSelectionMode, string) (store.TimingSessionSelection, error)
+	SetTimingCapturePaused(context.Context, string, string, string, bool) error
+	SetTimingSegment(context.Context, string, string, string, store.TimingSegment) error
+}
+
+type timingSegmentRequest struct {
+	First    int64 `json:"first"`
+	Last     int64 `json:"last"`
+	Excluded *bool `json:"excluded"`
 }
 
 type timingSelectionRequest struct {
-	Mode store.TimingSelectionMode `json:"mode"`
+	Review  *store.TimingSelectionReview `json:"review,omitempty"`
+	Segment *timingSegmentRequest        `json:"segment,omitempty"`
+	Mode    store.TimingSelectionMode    `json:"mode,omitempty"`
+	Paused  *bool                        `json:"paused,omitempty"`
 }
 
 func WithOperatorTimingIntelligence(auth *userauth.Service, service TimingIntelligenceService) Option {
@@ -27,7 +41,7 @@ func WithOperatorTimingIntelligence(auth *userauth.Service, service TimingIntell
 			return
 		}
 
-		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/timing-intelligence", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/timing-intelligence", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 			leadTime := 30 * time.Second
 			if raw := strings.TrimSpace(r.URL.Query().Get("lead_time_seconds")); raw != "" {
 				seconds, err := strconv.Atoi(raw)
@@ -49,13 +63,20 @@ func WithOperatorTimingIntelligence(auth *userauth.Service, service TimingIntell
 			}
 			report, err := service.Report(r.Context(), r.PathValue("project_id"), timingintelligence.ReportOptions{
 				RuntimeSnapshotID: strings.TrimSpace(r.URL.Query().Get("runtime_snapshot_id")),
-				SessionID: strings.TrimSpace(r.URL.Query().Get("session_id")),
-				LeadTime: leadTime,
-				SectionFromCueID: fromCue,
-				SectionToCueID: toCue,
+				SessionID:         strings.TrimSpace(r.URL.Query().Get("session_id")),
+				ReviewSessionID:   strings.TrimSpace(r.URL.Query().Get("review_session_id")),
+				LeadTime:          leadTime,
+				SectionFromCueID:  fromCue,
+				SectionToCueID:    toCue,
 			})
 			if err != nil {
+				if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+					return
+				}
 				writeProjectStoreError(w, err)
+				return
+			}
+			if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
 				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"report": report})
@@ -66,14 +87,78 @@ func WithOperatorTimingIntelligence(auth *userauth.Service, service TimingIntell
 			if !decodeBoundedJSON(w, r, &body) {
 				return
 			}
+			if _, err := currentProjectRouteGrant(r); !writeProjectQualificationError(w, err) {
+				return
+			}
+			ctx := projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit)
+			if body.Segment != nil {
+				if body.Mode != "" || body.Paused != nil || body.Review != nil || body.Segment.Excluded == nil {
+					writeJSON(w, http.StatusBadRequest, map[string]string{"error_code": "TIMING_MUTATION_AMBIGUOUS"})
+					return
+				}
+				segment := store.TimingSegment{First: body.Segment.First, Last: body.Segment.Last, Excluded: *body.Segment.Excluded}
+				err := service.SetTimingSegment(ctx, r.PathValue("project_id"), r.PathValue("session_id"), session.User.Username, segment)
+				if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit) {
+					return
+				}
+				if err != nil {
+					writeTimingMutationError(w, err)
+					return
+				}
+				writeJSON(w, http.StatusOK, map[string]any{"segment": segment})
+				return
+			}
+			if body.Paused != nil {
+				if body.Mode != "" || body.Review != nil {
+					writeJSON(w, http.StatusBadRequest, map[string]string{"error_code": "TIMING_MUTATION_AMBIGUOUS"})
+					return
+				}
+				err := service.SetTimingCapturePaused(ctx, r.PathValue("project_id"), r.PathValue("session_id"), session.User.Username, *body.Paused)
+				if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit) {
+					return
+				}
+				if err != nil {
+					writeProjectStoreError(w, err)
+					return
+				}
+				writeJSON(w, http.StatusOK, map[string]bool{"capture_paused": *body.Paused})
+				return
+			}
+			if body.Review != nil {
+				switch body.Review.Mode {
+				case store.TimingSelectionAuto, store.TimingSelectionInclude, store.TimingSelectionExclude:
+				default:
+					writeTimingMutationError(w, domain.ErrInvalidInput)
+					return
+				}
+				if strings.TrimSpace(body.Review.RuntimeSnapshotID) == "" {
+					writeTimingMutationError(w, domain.ErrInvalidInput)
+					return
+				}
+				ctx = store.WithTimingSelectionReview(ctx, *body.Review)
+			}
 			selection, err := service.SetSessionSelection(
-				r.Context(), r.PathValue("project_id"), r.PathValue("session_id"), body.Mode, session.User.Username,
+				ctx, r.PathValue("project_id"), r.PathValue("session_id"), body.Mode, session.User.Username,
 			)
+			if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit) {
+				return
+			}
 			if err != nil {
-				writeProjectStoreError(w, err)
+				writeTimingMutationError(w, err)
 				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"selection": selection})
 		}))
+	}
+}
+
+func writeTimingMutationError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, domain.ErrInvalidInput):
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error_code": "INVALID_TIMING_SELECTION"})
+	case errors.Is(err, domain.ErrShowConfigurationLocked):
+		writeJSON(w, http.StatusConflict, map[string]string{"error_code": "SHOW_CONFIGURATION_LOCKED"})
+	default:
+		writeProjectStoreError(w, err)
 	}
 }

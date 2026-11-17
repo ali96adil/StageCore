@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/domain"
 )
@@ -42,7 +43,7 @@ func (s *Store) SetMachineRoleRuntimeRequirement(ctx context.Context, machineRol
 		return fmt.Errorf("%w: published Runtime Snapshot must belong to the Machine Role Project", domain.ErrConflict)
 	}
 	nowUS := clock.UnixMicros(s.clock.Now())
-	result, err := s.db.ExecContext(ctx, `
+	result, err := capability.ExecAuthorized(ctx, s.db, `
 		UPDATE machine_roles
 		SET required_runtime_snapshot_id = ?, required_config_hash = ?, updated_at_us = ?
 		WHERE machine_role_id = ?`, runtimeSnapshotID, strings.TrimSpace(configHash), nowUS, machineRoleID)

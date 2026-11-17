@@ -16,7 +16,7 @@ func TestDuplicateProjectAuthoringIndependentCueNotes(t *testing.T) {
     if err != nil { t.Fatal(err) }
     cue, err := s.CreateCueWithActions(ctx, domain.Cue{
         RevisionID: revision.ID, DisplayLabel:"1", Name:"Opening", OrderIndex:1,
-        Enabled:true, NotesSummary:"Lights ready\nGO on gesture", ExecutionPolicy:json.RawMessage(`{"start_delay_ms":2000}`),
+        Enabled:true, NotesSummary:"Lights ready\nGO on gesture", ExecutionPolicy:json.RawMessage(`{"start_delay_ms":2000,"operator_cue_color":"purple"}`),
     }, nil)
     if err != nil { t.Fatal(err) }
     duplicate, draft, err := s.DuplicateProjectAuthoring(ctx, original.ID, "Opening Copy", "operator")
@@ -27,7 +27,7 @@ func TestDuplicateProjectAuthoringIndependentCueNotes(t *testing.T) {
     if draft.ID == revision.ID || draft.Status != domain.RevisionDraft { t.Fatalf("bad copy revision: %+v", draft) }
     copied, err := s.ListCues(ctx, draft.ID)
     if err != nil { t.Fatal(err) }
-    if len(copied) != 1 || copied[0].ID == cue.ID || copied[0].NotesSummary != cue.NotesSummary ||
+    if len(copied) != 1 || copied[0].ID == cue.ID || copied[0].DisplayLabel != cue.DisplayLabel || copied[0].NotesSummary != cue.NotesSummary ||
        string(copied[0].ExecutionPolicy) != string(cue.ExecutionPolicy) {
        t.Fatalf("duplicate Cue not independent: %+v", copied)
     }

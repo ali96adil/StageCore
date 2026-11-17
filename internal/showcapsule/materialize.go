@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 
 	"github.com/ali96adil/StageCore/internal/canonicaljson"
@@ -14,18 +14,19 @@ import (
 )
 
 type MaterializeOptions struct {
-	ImportedBy string `json:"imported_by"`
+	ImportedBy     string                      `json:"imported_by"`
+	AuthorizeWrite func(context.Context) error `json:"-"`
 }
 
 type MaterializeResult struct {
-	CapsuleID            string   `json:"capsule_id"`
-	ProjectID            string   `json:"project_id"`
-	RevisionID           string   `json:"revision_id"`
-	RuntimeSnapshotID    string   `json:"runtime_snapshot_id"`
-	ImportedObjects      []string `json:"imported_objects,omitempty"`
-	ReusedObjects        []string `json:"reused_objects,omitempty"`
-	ImportedExtensions   []string `json:"imported_extensions,omitempty"`
-	ReplacementHostReady bool     `json:"replacement_host_ready"`
+	CapsuleID            string     `json:"capsule_id"`
+	ProjectID            string     `json:"project_id"`
+	RevisionID           string     `json:"revision_id"`
+	RuntimeSnapshotID    string     `json:"runtime_snapshot_id"`
+	ImportedObjects      []string   `json:"imported_objects,omitempty"`
+	ReusedObjects        []string   `json:"reused_objects,omitempty"`
+	ImportedExtensions   []string   `json:"imported_extensions,omitempty"`
+	ReplacementHostReady bool       `json:"replacement_host_ready"`
 	Plan                 ImportPlan `json:"plan"`
 }
 
@@ -42,6 +43,13 @@ func (s *Service) Materialize(ctx context.Context, capsulePath string, options M
 		return MaterializeResult{}, fmt.Errorf("%w: show capsule is not ready for materialization", domain.ErrConflict)
 	}
 
+	root, err := openCapsuleRoot(strings.TrimSpace(capsulePath))
+	if err != nil {
+		return MaterializeResult{}, err
+	}
+	defer root.Close()
+	plannedManifest := plan.Manifest
+
 	importedObjects := make([]string, 0, len(plan.IncludedObjects))
 	projectCommitted := false
 	defer func() {
@@ -55,23 +63,24 @@ func (s *Service) Materialize(ctx context.Context, capsulePath string, options M
 	}()
 
 	for _, object := range plan.IncludedObjects {
-		path := filepath.Join(filepath.Clean(capsulePath), filepath.FromSlash(object.ArchivePath))
-		file, err := os.Open(path)
+		if options.AuthorizeWrite != nil {
+			if err := options.AuthorizeWrite(ctx); err != nil {
+				return MaterializeResult{}, err
+			}
+		}
+		file, err := openCapsuleFile(root, filepath.FromSlash(object.ArchivePath))
 		if err != nil {
 			return MaterializeResult{}, fmt.Errorf("open capsule object %s: %w", object.ContentSHA256, err)
 		}
-		imported, importErr := s.vault.ImportObject(ctx, file)
+		imported, importErr := s.vault.ImportVerifiedObject(ctx, object.ContentSHA256, object.SizeBytes, file)
 		closeErr := file.Close()
 		if importErr != nil {
 			return MaterializeResult{}, fmt.Errorf("import capsule object %s: %w", object.ContentSHA256, importErr)
 		}
+		importedObjects = append(importedObjects, imported.ContentHash)
 		if closeErr != nil {
 			return MaterializeResult{}, fmt.Errorf("close capsule object %s: %w", object.ContentSHA256, closeErr)
 		}
-		if imported.ContentHash != object.ContentSHA256 || imported.SizeBytes != object.SizeBytes {
-			return MaterializeResult{}, fmt.Errorf("%w: imported capsule object identity changed", domain.ErrConflict)
-		}
-		importedObjects = append(importedObjects, imported.ContentHash)
 	}
 
 	// Re-evaluate after object promotion. This catches storage metadata conflicts,
@@ -81,13 +90,18 @@ func (s *Service) Materialize(ctx context.Context, capsulePath string, options M
 	if err != nil {
 		return MaterializeResult{}, err
 	}
-	if !plan.MaterializationReady {
-		return MaterializeResult{}, fmt.Errorf("%w: show capsule readiness changed before materialization", domain.ErrConflict)
+	if !plan.MaterializationReady || !reflect.DeepEqual(plannedManifest, plan.Manifest) {
+		return MaterializeResult{}, fmt.Errorf("%w: show capsule readiness or manifest changed before materialization", domain.ErrConflict)
 	}
 
 	bundle, err := portableImportFromManifest(plan.Manifest, actor)
 	if err != nil {
 		return MaterializeResult{}, err
+	}
+	if options.AuthorizeWrite != nil {
+		if err := options.AuthorizeWrite(ctx); err != nil {
+			return MaterializeResult{}, err
+		}
 	}
 	imported, err := s.store.ImportPortableProject(ctx, bundle)
 	if err != nil {
@@ -104,15 +118,15 @@ func (s *Service) Materialize(ctx context.Context, capsulePath string, options M
 		reused = append(reused, object.ContentSHA256)
 	}
 	return MaterializeResult{
-		CapsuleID: plan.CapsuleID,
-		ProjectID: imported.ProjectID,
-		RevisionID: imported.RevisionID,
-		RuntimeSnapshotID: imported.RuntimeSnapshotID,
-		ImportedObjects: importedObjects,
-		ReusedObjects: reused,
-		ImportedExtensions: imported.ImportedExtensions,
+		CapsuleID:            plan.CapsuleID,
+		ProjectID:            imported.ProjectID,
+		RevisionID:           imported.RevisionID,
+		RuntimeSnapshotID:    imported.RuntimeSnapshotID,
+		ImportedObjects:      importedObjects,
+		ReusedObjects:        reused,
+		ImportedExtensions:   imported.ImportedExtensions,
 		ReplacementHostReady: finalPlan.ReplacementHostReady,
-		Plan: finalPlan,
+		Plan:                 finalPlan,
 	}, nil
 }
 
@@ -126,53 +140,53 @@ func portableImportFromManifest(manifest Manifest, actor string) (store.Portable
 		notes[note.CueID] = note.Text
 	}
 	bundle := store.PortableProjectImport{
-		ProjectID: manifest.Project.ProjectID,
-		Name: manifest.Project.Name,
-		Description: manifest.Project.Description,
-		RevisionID: manifest.Project.RevisionID,
+		ProjectID:      manifest.Project.ProjectID,
+		Name:           manifest.Project.Name,
+		Description:    manifest.Project.Description,
+		RevisionID:     manifest.Project.RevisionID,
 		RevisionNumber: manifest.Project.RevisionNumber,
 		RuntimeSnapshot: store.PortableRuntimeSnapshotImport{
-			ID: manifest.RuntimeSnapshot.RuntimeSnapshotID,
-			Version: manifest.RuntimeSnapshot.SnapshotVersion,
-			ContentHash: manifest.RuntimeSnapshot.ContentSHA256,
+			ID:           manifest.RuntimeSnapshot.RuntimeSnapshotID,
+			Version:      manifest.RuntimeSnapshot.SnapshotVersion,
+			ContentHash:  manifest.RuntimeSnapshot.ContentSHA256,
 			ManifestJSON: json.RawMessage(runtimeJSON),
 		},
 		ImportedBy: actor,
 	}
 	for _, target := range manifest.RuntimeSnapshot.Manifest.Targets {
 		bundle.Aliases = append(bundle.Aliases, store.PortableAliasImport{
-			ID: target.AliasID,
-			LogicalName: target.TargetRef,
-			LogicalType: target.LogicalType,
-			TargetRef: "",
-			GroupName: "",
+			ID:            target.AliasID,
+			LogicalName:   target.TargetRef,
+			LogicalType:   target.LogicalType,
+			TargetRef:     "",
+			GroupName:     "",
 			Configuration: append(json.RawMessage(nil), target.Configuration...),
 		})
 	}
 	for _, cue := range manifest.RuntimeSnapshot.Manifest.Cues {
 		item := store.PortableCueImport{
-			ID: cue.ID,
-			DisplayLabel: cue.DisplayLabel,
-			Name: cue.Name,
-			OrderIndex: cue.OrderIndex,
-			CueType: cue.CueType,
-			Criticality: cue.Criticality,
-			Enabled: cue.Enabled,
+			ID:              cue.ID,
+			DisplayLabel:    cue.DisplayLabel,
+			Name:            cue.Name,
+			OrderIndex:      cue.OrderIndex,
+			CueType:         cue.CueType,
+			Criticality:     cue.Criticality,
+			Enabled:         cue.Enabled,
 			ExecutionPolicy: append(json.RawMessage(nil), cue.ExecutionPolicy...),
-			NotesSummary: notes[cue.ID],
+			NotesSummary:    notes[cue.ID],
 		}
 		for _, action := range cue.Actions {
 			item.Actions = append(item.Actions, store.PortableActionImport{
-				ID: action.ID,
-				OrderIndex: action.OrderIndex,
+				ID:            action.ID,
+				OrderIndex:    action.OrderIndex,
 				ExecutionMode: action.ExecutionMode,
-				TargetRef: action.TargetRef,
+				TargetRef:     action.TargetRef,
 				CapabilityKey: action.CapabilityKey,
-				Parameters: append(json.RawMessage(nil), action.Parameters...),
+				Parameters:    append(json.RawMessage(nil), action.Parameters...),
 				TimeoutPolicy: append(json.RawMessage(nil), action.TimeoutPolicy...),
-				ErrorPolicy: append(json.RawMessage(nil), action.ErrorPolicy...),
+				ErrorPolicy:   append(json.RawMessage(nil), action.ErrorPolicy...),
 				PriorityClass: action.PriorityClass,
-				Enabled: action.Enabled,
+				Enabled:       action.Enabled,
 			})
 		}
 		bundle.Cues = append(bundle.Cues, item)
@@ -194,7 +208,7 @@ func portableImportFromManifest(manifest Manifest, actor string) (store.Portable
 			ID: route.ID, Name: route.Name, InputID: route.InputID,
 			ConditionDefinition: append(json.RawMessage(nil), route.ConditionDefinition...),
 			TransformDefinition: append(json.RawMessage(nil), route.TransformDefinition...),
-			DelayMS: cloneInt64(route.DelayMS), DebounceMS: cloneInt64(route.DebounceMS),
+			DelayMS:             cloneInt64(route.DelayMS), DebounceMS: cloneInt64(route.DebounceMS),
 			PriorityClass: route.PriorityClass, ErrorPolicy: append(json.RawMessage(nil), route.ErrorPolicy...), Enabled: route.Enabled,
 		}
 		for _, action := range route.Actions {
@@ -209,30 +223,30 @@ func portableImportFromManifest(manifest Manifest, actor string) (store.Portable
 	for _, role := range manifest.MachineRoles {
 		bundle.MachineRoles = append(bundle.MachineRoles, store.PortableMachineRoleImport{
 			ID: role.MachineRoleID, RoleKey: role.RoleKey, DisplayName: role.DisplayName,
-			RequiredCapabilities: append([]string(nil), role.RequiredCapabilities...),
+			RequiredCapabilities:      append([]string(nil), role.RequiredCapabilities...),
 			RequiredRuntimeSnapshotID: cloneString(role.RequiredRuntimeSnapshotID),
-			RequiredConfigHash: role.RequiredConfigHash, Required: role.Required,
+			RequiredConfigHash:        role.RequiredConfigHash, Required: role.Required,
 		})
 	}
 	for _, media := range manifest.Media {
 		bundle.Media = append(bundle.Media, store.PortableMediaImport{
-			MachineRoleID: media.MachineRoleID,
-			MediaAssetID: media.MediaAssetID,
+			MachineRoleID:    media.MachineRoleID,
+			MediaAssetID:     media.MediaAssetID,
 			ContentVersionID: media.ContentVersionID,
-			Name: media.MediaAssetID,
-			AssetPolicy: media.AssetPolicy,
-			ContentHash: media.ContentSHA256,
-			SizeBytes: media.SizeBytes,
+			Name:             media.MediaAssetID,
+			AssetPolicy:      media.AssetPolicy,
+			ContentHash:      media.ContentSHA256,
+			SizeBytes:        media.SizeBytes,
 			OriginalFilename: "",
-			Required: media.Required,
+			Required:         media.Required,
 		})
 	}
 	for _, environment := range manifest.ExecutionEnvironments {
 		item := store.PortableExecutionEnvironmentImport{
-			ManifestID: environment.ManifestID,
+			ManifestID:    environment.ManifestID,
 			MachineRoleID: cloneString(environment.MachineRoleID),
-			ContentHash: environment.ContentSHA256,
-			Manifest: environment.Manifest,
+			ContentHash:   environment.ContentSHA256,
+			Manifest:      environment.Manifest,
 		}
 		if environment.LatestSnapshot != nil {
 			item.SnapshotID = environment.LatestSnapshot.SnapshotID
@@ -244,25 +258,25 @@ func portableImportFromManifest(manifest Manifest, actor string) (store.Portable
 	}
 	for _, extension := range manifest.Extensions {
 		bundle.Extensions = append(bundle.Extensions, store.PortableExtensionImport{
-			PackageID: extension.PackageID,
-			ProductID: extension.Software.ProductID,
-			SoftwareVersion: extension.Software.Version,
-			Platform: extension.Software.Platform,
-			Architecture: extension.Software.Architecture,
-			MinAPIVersion: extension.Software.MinAPIVersion,
-			MaxAPIVersion: extension.Software.MaxAPIVersion,
-			ContentHash: extension.Software.ContentSHA256,
-			SizeBytes: extension.Software.SizeBytes,
-			OriginalFilename: extension.Software.OriginalFilename,
-			SigningStatus: extension.Software.SigningStatus,
+			PackageID:          extension.PackageID,
+			ProductID:          extension.Software.ProductID,
+			SoftwareVersion:    extension.Software.Version,
+			Platform:           extension.Software.Platform,
+			Architecture:       extension.Software.Architecture,
+			MinAPIVersion:      extension.Software.MinAPIVersion,
+			MaxAPIVersion:      extension.Software.MaxAPIVersion,
+			ContentHash:        extension.Software.ContentSHA256,
+			SizeBytes:          extension.Software.SizeBytes,
+			OriginalFilename:   extension.Software.OriginalFilename,
+			SigningStatus:      extension.Software.SigningStatus,
 			NotarizationStatus: extension.Software.NotarizationStatus,
-			ReleaseChannel: extension.Software.ReleaseChannel,
-			ExtensionID: extension.ExtensionID,
-			ExtensionVersion: extension.Version,
-			Kind: extension.Kind,
-			Source: extension.Source,
-			ManifestJSON: append(json.RawMessage(nil), extension.Manifest...),
-			ManifestSHA256: extension.ManifestSHA256,
+			ReleaseChannel:     extension.Software.ReleaseChannel,
+			ExtensionID:        extension.ExtensionID,
+			ExtensionVersion:   extension.Version,
+			Kind:               extension.Kind,
+			Source:             extension.Source,
+			ManifestJSON:       append(json.RawMessage(nil), extension.Manifest...),
+			ManifestSHA256:     extension.ManifestSHA256,
 		})
 	}
 	return bundle, nil
@@ -270,13 +284,13 @@ func portableImportFromManifest(manifest Manifest, actor string) (store.Portable
 
 func (s *Service) planImportedProject(ctx context.Context, capsulePath string, manifest Manifest) (ImportPlan, error) {
 	plan := ImportPlan{
-		CapsuleID: manifest.CapsuleID,
-		ProjectID: manifest.Project.ProjectID,
-		RuntimeSnapshotID: manifest.RuntimeSnapshot.RuntimeSnapshotID,
-		ExportMode: manifest.ExportMode,
+		CapsuleID:            manifest.CapsuleID,
+		ProjectID:            manifest.Project.ProjectID,
+		RuntimeSnapshotID:    manifest.RuntimeSnapshot.RuntimeSnapshotID,
+		ExportMode:           manifest.ExportMode,
 		MaterializationReady: true,
 		ReplacementHostReady: true,
-		Manifest: manifest,
+		Manifest:             manifest,
 	}
 	plan.pass("capsule.materialized", "Project graph and immutable Runtime Snapshot were materialized successfully.")
 	for _, object := range manifest.Objects {

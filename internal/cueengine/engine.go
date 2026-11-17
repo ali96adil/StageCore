@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/actionpolicy"
 	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/contracts"
 	"github.com/ali96adil/StageCore/internal/domain"
@@ -57,6 +58,30 @@ func NewWithExecutor(s *store.Store, executor capability.Executor) *Engine {
 }
 
 func (e *Engine) ExecuteCueGo(ctx context.Context, sessionID string, command contracts.CommandEnvelope) contracts.CommandResult {
+	return e.executeCueGo(ctx, sessionID, command, nil)
+}
+
+// ExecuteCueGoWithScheduleAck returns an ACCEPTED result as soon as the Cue
+// execution, current-Cue position and command progress are durably recorded.
+// The final command result is persisted after the linked Cue group completes.
+func (e *Engine) ExecuteCueGoWithScheduleAck(
+	ctx context.Context,
+	sessionID string,
+	command contracts.CommandEnvelope,
+	onAccepted func(contracts.CommandResult),
+) contracts.CommandResult {
+	if onAccepted == nil {
+		return rejection(command.CommandID, "CUE_SCHEDULE_ACK_REQUIRED", "VALIDATION", "schedule acknowledgement callback is required", false, command.CommandID)
+	}
+	return e.executeCueGo(ctx, sessionID, command, &cueGoScheduleState{onAccepted: onAccepted})
+}
+
+type cueGoScheduleState struct {
+	onAccepted func(contracts.CommandResult)
+	accepted   bool
+}
+
+func (e *Engine) executeCueGo(ctx context.Context, sessionID string, command contracts.CommandEnvelope, schedule *cueGoScheduleState) contracts.CommandResult {
 	if result := validateEnvelope(command); result != nil {
 		return *result
 	}
@@ -76,14 +101,21 @@ func (e *Engine) ExecuteCueGo(ctx context.Context, sessionID string, command con
 	if command.CorrelationID == "" {
 		command.CorrelationID = record.CorrelationID
 	}
-	result := e.executeReserved(ctx, sessionID, command)
-	if err := e.store.FinishCommand(ctx, command.CommandID, result); err != nil {
+	result := e.executeReserved(ctx, sessionID, command, schedule)
+	finishCtx := ctx
+	if schedule != nil && schedule.accepted {
+		// Once accepted, the Hub owns this durable execution independently of
+		// the HTTP request lifetime. Dispatch authorization values are retained
+		// and revalidated at each output boundary.
+		finishCtx = context.WithoutCancel(ctx)
+	}
+	if err := e.store.FinishCommand(finishCtx, command.CommandID, result); err != nil {
 		return internalFailure(command.CommandID, "COMMAND_FINISH_FAILED", err)
 	}
 	return result
 }
 
-func (e *Engine) executeReserved(ctx context.Context, sessionID string, command contracts.CommandEnvelope) contracts.CommandResult {
+func (e *Engine) executeReserved(ctx context.Context, sessionID string, command contracts.CommandEnvelope, schedule *cueGoScheduleState) contracts.CommandResult {
 	e.advanceMu.Lock()
 	launchLocked := true
 	defer func() {
@@ -92,7 +124,7 @@ func (e *Engine) executeReserved(ctx context.Context, sessionID string, command 
 		}
 	}()
 
-	session, err := e.store.GetSession(ctx, sessionID)
+	session, err := e.store.GetSessionFoundation(ctx, sessionID)
 	if err != nil {
 		return rejection(command.CommandID, "SESSION_NOT_FOUND", "VALIDATION", "session not found", false, sessionID)
 	}
@@ -104,6 +136,11 @@ func (e *Engine) executeReserved(ctx context.Context, sessionID string, command 
 	}
 	if session.RuntimeSnapshotID != command.RuntimeSnapshotID {
 		return rejection(command.CommandID, "SNAPSHOT_MISMATCH", "SNAPSHOT_MISMATCH", "command snapshot does not match session", false, command.RuntimeSnapshotID)
+	}
+	if session.StateTruth.ManualConfirmationRequired ||
+		session.StateTruth.RestorationStatus == domain.SessionRestorationManualConfirmationRequired {
+		return rejection(command.CommandID, "SESSION_START_CONFIRMATION_REQUIRED", "VALIDATION",
+			"the Session start state requires explicit operator confirmation before Cue GO", false, session.ID)
 	}
 	// Reject an orphan RUNNING execution when the Hub no longer tracks it.
 	// Live overlapping GO calls are explicitly authorized by RuntimeControl.
@@ -140,6 +177,25 @@ func (e *Engine) executeReserved(ctx context.Context, sessionID string, command 
 	if groupErr != nil {
 		return rejection(command.CommandID, "CUE_GROUP_INVALID", "VALIDATION", groupErr.Error(), false, selected.ID)
 	}
+	var outputResources []string
+	if session.Type != domain.SessionSimulation {
+		outputResources = OutputResourcesForCueGroup(manifest, group)
+	}
+	if admission, ok := ctx.Value(cueGoAdmissionKey{}).(CueGoAdmission); ok && admission != nil {
+		if result := admission(manifest, group, outputResources); result != nil {
+			result.CommandID = command.CommandID
+			return *result
+		}
+	}
+	releaseOutputResources := func() {}
+	if session.Type != domain.SessionSimulation {
+		var conflictingCueID string
+		releaseOutputResources, conflictingCueID = e.store.ReserveOutputResources(command.CommandID, selected.ID, outputResources)
+		if conflictingCueID != "" {
+			return outputResourceConflict(command.CommandID, conflictingCueID)
+		}
+	}
+	defer releaseOutputResources()
 	linkedIDs := linkedCueIDs(group)
 
 	cueExecution, err := e.store.CreateCueExecution(ctx, sessionID, selected.ID, command.CorrelationID, command.Issuer)
@@ -159,6 +215,27 @@ func (e *Engine) executeReserved(ctx context.Context, sessionID string, command 
 	if err := e.store.SetSessionCurrentCue(ctx, sessionID, selected.ID); err != nil {
 		_ = e.store.FinishCueExecution(ctx, cueExecution.ID, domain.ExecutionFailed)
 		return internalFailure(command.CommandID, "CURRENT_CUE_UPDATE_FAILED", err)
+	}
+	if schedule != nil {
+		acceptedPayload, _ := json.Marshal(map[string]any{
+			"cue_execution_id": cueExecution.ID,
+			"cue_id":           selected.ID,
+			"linked_cue_ids":   linkedIDs,
+			"result":           domain.ExecutionRunning,
+		})
+		acceptedResult := contracts.CommandResult{
+			CommandID: command.CommandID,
+			Status:    contracts.CommandAccepted,
+			Payload:   acceptedPayload,
+		}
+		if err := e.store.UpdateAcceptedCommandResult(ctx, command.CommandID, acceptedResult); err != nil {
+			cleanupCtx := context.WithoutCancel(ctx)
+			_ = e.store.FinishCueExecution(cleanupCtx, cueExecution.ID, domain.ExecutionFailed)
+			return internalFailure(command.CommandID, "CUE_SCHEDULE_ACK_PERSIST_FAILED", err)
+		}
+		schedule.accepted = true
+		schedule.onAccepted(acceptedResult)
+		ctx = context.WithoutCancel(ctx)
 	}
 	// A second GO may now select and launch the following Cue while this
 	// execution waits in its own delay or runs its independent Actions.
@@ -239,6 +316,18 @@ func (e *Engine) executeReserved(ctx context.Context, sessionID string, command 
 	}
 	resultPayload, _ := json.Marshal(resultBody)
 	return contracts.CommandResult{CommandID: command.CommandID, Status: commandStatus, Payload: resultPayload, Error: commandError}
+}
+
+func outputResourceConflict(commandID, activeCueID string) contracts.CommandResult {
+	return contracts.CommandResult{
+		CommandID: commandID,
+		Status:    contracts.CommandRejected,
+		Error: &contracts.ContractError{
+			ErrorCode: "CUE_OUTPUT_CONFLICT", Category: "SAFETY",
+			Message:   "another active Cue (" + activeCueID + ") may control the same output; wait for it to finish or STOP ALL CUES before trying again",
+			Retryable: false, AffectedEntityID: activeCueID,
+		},
+	}
 }
 
 func (e *Engine) executeActions(
@@ -373,7 +462,7 @@ func (e *Engine) startAction(
 	}
 	resultCh := make(chan actionOutcome, 1)
 	run := func() {
-		outcome := e.runAction(ctx, sessionID, command, manifest, actionExecution, startedEvent.EventID, action)
+		outcome := e.runAction(ctx, sessionID, command, manifest, actionExecution, cueExecution.CueID, startedEvent.EventID, action)
 		resultCh <- outcome
 		close(resultCh)
 	}
@@ -391,34 +480,54 @@ func (e *Engine) runAction(
 	command contracts.CommandEnvelope,
 	manifest snapshot.Manifest,
 	actionExecution domain.ActionExecution,
+	cueID string,
 	startedEventID string,
 	action snapshot.Action,
 ) actionOutcome {
-	actionCtx, cancel, timeoutMS, policyErr := actionContext(parent, action.TimeoutPolicy)
-	if cancel != nil {
-		defer cancel()
-	}
-
+	settings, policyErr := actionpolicy.Parse(action.TimeoutPolicy, action.ErrorPolicy)
 	started := time.Now()
 	var executionResult capability.Result
+	attempts := 0
 	if policyErr != nil {
-		executionResult = capability.Result{
-			Result:          domain.ExecutionFailed,
-			AckLevel:        contracts.AckNone,
-			ErrorCode:       "INVALID_TIMEOUT_POLICY",
-			ResponseSummary: policyErr.Error(),
-		}
+		executionResult = capability.Result{Result: domain.ExecutionFailed, AckLevel: contracts.AckNone,
+			ErrorCode: "INVALID_ACTION_POLICY", ResponseSummary: policyErr.Error()}
+	} else if !waitForActionDispatch(parent, time.Duration(settings.StartDelayMS)*time.Millisecond) {
+		executionResult = cancelledActionDispatch()
 	} else {
-		executionResult = e.executor.Execute(actionCtx, capability.Request{
-			ExecutionID:       actionExecution.ID,
-			RuntimeSnapshotID: command.RuntimeSnapshotID,
-			Capability:        action.CapabilityKey,
-			Target:            resolvedTarget(manifest, action.TargetRef),
-			Parameters:        action.Parameters,
-			Priority:          action.PriorityClass,
-			TimeoutMS:         timeoutMS,
-			CorrelationID:     command.CorrelationID,
-		})
+		actionCtx, cancel, timeoutMS, err := actionContext(parent, action.TimeoutPolicy)
+		if cancel != nil {
+			defer cancel()
+		}
+		if err != nil {
+			executionResult = capability.Result{Result: domain.ExecutionFailed, AckLevel: contracts.AckNone,
+				ErrorCode: "INVALID_TIMEOUT_POLICY", ResponseSummary: err.Error()}
+		} else {
+			req := capability.Request{
+				ExecutionID: actionExecution.ID, RuntimeSnapshotID: command.RuntimeSnapshotID,
+				ProjectID: command.ProjectID, SessionID: sessionID,
+				CueID: cueID, RequireApplicationACK: settings.RequireApplicationACK,
+				Capability: action.CapabilityKey, Target: resolvedTarget(manifest, action.TargetRef),
+				Parameters: action.Parameters, Priority: action.PriorityClass,
+				TimeoutMS: timeoutMS, CorrelationID: command.CorrelationID,
+			}
+			attempts = 1
+			executionResult = e.executor.Execute(actionCtx, req)
+			if settings.RetryBeforeDispatch && executionResult.Result == domain.ExecutionFailed &&
+				executionResult.AckLevel == contracts.AckNone && executionResult.DispatchNotAttempted {
+				if waitForActionDispatch(actionCtx, 150*time.Millisecond) {
+					attempts++
+					executionResult = e.executor.Execute(actionCtx, req)
+				} else if parent.Err() != nil || !waitForActionDispatch(parent, 0) {
+					executionResult = cancelledActionDispatch()
+				}
+			}
+			if settings.RequireApplicationACK && executionResult.Result == domain.ExecutionCompleted &&
+				executionResult.AckLevel != contracts.AckApplication {
+				executionResult.Result = domain.ExecutionFailed
+				executionResult.ErrorCode = "APPLICATION_ACK_MISSING"
+				executionResult.ResponseSummary = "Application acknowledgment was required. Output may already have been sent."
+			}
+		}
 	}
 
 	latencyMS := time.Since(started).Milliseconds()
@@ -445,6 +554,7 @@ func (e *Engine) runAction(
 		"action_id":           action.ID,
 		"result":              executionResult.Result,
 		"ack_level":           executionResult.AckLevel,
+		"dispatch_attempts":   attempts,
 		"latency_ms":          latencyMS,
 		"response_summary":    executionResult.ResponseSummary,
 		"error_code":          executionResult.ErrorCode,
@@ -458,6 +568,32 @@ func (e *Engine) runAction(
 		return actionOutcome{result: domain.ExecutionFailed, fatal: true, eventID: event.EventID, err: err}
 	}
 	return actionOutcome{result: executionResult.Result, fatal: fatal, eventID: event.EventID}
+}
+
+func waitForActionDispatch(ctx context.Context, delay time.Duration) bool {
+	stop := delayStopSignal(ctx)
+	if delay > 0 {
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return false
+		case <-stop:
+			return false
+		case <-timer.C:
+		}
+	}
+	select {
+	case <-stop:
+		return false
+	default:
+		return ctx.Err() == nil
+	}
+}
+
+func cancelledActionDispatch() capability.Result {
+	return capability.Result{Result: domain.ExecutionCancelled, AckLevel: contracts.AckNone,
+		ErrorCode: "ACTION_DISPATCH_CANCELLED", ResponseSummary: "Action stopped before dispatch"}
 }
 
 func resolvedTarget(manifest snapshot.Manifest, targetRef string) *capability.Target {
@@ -555,6 +691,15 @@ func (e *Engine) emit(
 func (e *Engine) duplicateResult(record domain.CommandRecord) contracts.CommandResult {
 	if result, terminal, err := e.store.StoredCommandResult(record); err == nil && terminal {
 		return result
+	}
+	if record.Status == string(contracts.CommandAccepted) {
+		var accepted contracts.CommandResult
+		if json.Unmarshal(record.ResultJSON, &accepted) == nil &&
+			accepted.CommandID == record.CommandID &&
+			accepted.Status == contracts.CommandAccepted &&
+			len(accepted.Payload) != 0 {
+			return accepted
+		}
 	}
 	return rejection(
 		record.CommandID,

@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/pluginprotocol"
 )
 
@@ -53,7 +54,7 @@ func New(command string, args []string, env []string, stderr io.Writer, manifest
 		command:        command,
 		args:           append([]string(nil), args...),
 		env:            append([]string(nil), env...),
-		startupTimeout: time.Second,
+		startupTimeout: 5 * time.Second,
 		stderr:         stderr,
 		manifest: Manifest{
 			PluginID:              manifest.PluginID,
@@ -79,7 +80,7 @@ func (h *Host) Execute(ctx context.Context, req pluginprotocol.ExecutionRequest)
 	defer h.mu.Unlock()
 
 	if err := ctx.Err(); err != nil {
-		return cancelled(req.ExecutionID), err
+		return interrupted(req.ExecutionID, err)
 	}
 	if req.TimeoutMS <= 0 {
 		req.TimeoutMS = 500
@@ -87,12 +88,18 @@ func (h *Host) Execute(ctx context.Context, req pluginprotocol.ExecutionRequest)
 	if err := h.authorizeLocked(req.Capability); err != nil {
 		return failed(req.ExecutionID, "PLUGIN_PERMISSION_DENIED", "PERMISSION", err.Error()), err
 	}
-	if err := h.ensureStartedLocked(); err != nil {
+	if err := h.ensureStartedLocked(ctx); err != nil {
+		if errors.Is(err, context.Canceled) {
+			return cancelled(req.ExecutionID), context.Canceled
+		}
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrPluginTimeout) {
+			return failed(req.ExecutionID, "TIMEOUT", "TIMEOUT", ErrPluginTimeout.Error()), ErrPluginTimeout
+		}
 		return failed(req.ExecutionID, "PLUGIN_FAILURE", "PLUGIN_FAILURE", err.Error()), err
 	}
 	if err := ctx.Err(); err != nil {
 		h.stopLocked()
-		return cancelled(req.ExecutionID), err
+		return interrupted(req.ExecutionID, err)
 	}
 	if h.ready.PluginID != h.manifest.PluginID {
 		err := fmt.Errorf("plugin identity mismatch: got %q want %q", h.ready.PluginID, h.manifest.PluginID)
@@ -107,6 +114,12 @@ func (h *Host) Execute(ctx context.Context, req pluginprotocol.ExecutionRequest)
 	line, err := json.Marshal(req)
 	if err != nil {
 		return failed(req.ExecutionID, "INVALID_PLUGIN_REQUEST", "VALIDATION", err.Error()), err
+	}
+	if err := capability.CheckDispatch(ctx); err != nil {
+		if errors.Is(err, capability.ErrDispatchAuthorityRevoked) {
+			return failed(req.ExecutionID, capability.DispatchAuthorityRevokedCode, "PERMISSION", err.Error()), err
+		}
+		return interrupted(req.ExecutionID, err)
 	}
 	if _, err := h.stdin.Write(append(line, '\n')); err != nil {
 		h.stopLocked()
@@ -189,7 +202,13 @@ func (h *Host) authorizeLocked(capability string) error {
 	return nil
 }
 
-func (h *Host) ensureStartedLocked() error {
+func (h *Host) ensureStartedLocked(parent context.Context) error {
+	if parent == nil {
+		parent = context.Background()
+	}
+	if err := parent.Err(); err != nil {
+		return err
+	}
 	if h.cmd != nil {
 		return nil
 	}
@@ -216,11 +235,17 @@ func (h *Host) ensureStartedLocked() error {
 	scanner.Buffer(make([]byte, 4*1024), 256*1024)
 	h.cmd, h.stdin, h.scanner = cmd, stdin, scanner
 
-	ctx, cancel := context.WithTimeout(context.Background(), h.startupTimeout)
+	ctx, cancel := context.WithTimeout(parent, h.startupTimeout)
 	defer cancel()
 	line, err := h.readLineLocked(ctx)
 	if err != nil {
 		h.stopLocked()
+		if parentErr := parent.Err(); parentErr != nil {
+			return parentErr
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf("%w during startup handshake", ErrPluginTimeout)
+		}
 		return fmt.Errorf("plugin startup handshake: %w", err)
 	}
 	var ready pluginprotocol.Ready
@@ -304,6 +329,13 @@ func cancelled(id string) pluginprotocol.ExecutionResult {
 		ErrorCategory: "CANCELLED",
 		ErrorMessage:  "plugin execution cancelled",
 	}
+}
+
+func interrupted(id string, err error) (pluginprotocol.ExecutionResult, error) {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return failed(id, "TIMEOUT", "TIMEOUT", ErrPluginTimeout.Error()), ErrPluginTimeout
+	}
+	return cancelled(id), context.Canceled
 }
 
 func contains(items []string, target string) bool {

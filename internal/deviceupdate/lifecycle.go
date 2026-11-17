@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	stageid "github.com/ali96adil/StageCore/internal/id"
 )
 
@@ -87,7 +88,7 @@ func (s *LifecycleStore) Issue(ctx context.Context, manifest Manifest, actor str
 	if err != nil {
 		return UpdateRecord{}, fmt.Errorf("encode firmware update manifest: %w", err)
 	}
-	_, err = s.db.ExecContext(ctx, `
+	_, err = capability.ExecAuthorized(ctx, s.db, `
 		INSERT INTO stage_device_firmware_updates (
 			update_id, device_id, profile_id, current_version, target_version,
 			source_revision, artifact_path, artifact_size, artifact_sha256,
@@ -179,6 +180,9 @@ func (s *LifecycleStore) MarkSent(ctx context.Context, updateID, deviceID string
 	}
 	if UpdateState(state) != UpdateIssued {
 		return UpdateRecord{}, ErrUpdateState
+	}
+	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
+		return UpdateRecord{}, err
 	}
 	if !time.UnixMicro(expiresUS).UTC().After(now) {
 		if _, err := tx.ExecContext(ctx, `

@@ -207,6 +207,52 @@ func TestBrowserSameOriginAndRoleDenial(t *testing.T) {
 	}
 }
 
+func TestAuthenticatedAPIResponsesAreNotCacheable(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	viewer, err := h.auth.CreateUser(ctx, "cache-policy-viewer", h.password, userauth.RoleViewer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	viewerLogin, err := h.auth.Login(ctx, viewer.Username, h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	protected := withPermission(h.auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, _ *http.Request, _ userauth.Session) {
+		writeJSON(w, http.StatusOK, map[string]string{"private": "operator state"})
+	})
+
+	tests := []struct {
+		name  string
+		token string
+		want  int
+	}{
+		{name: "missing session", want: http.StatusUnauthorized},
+		{name: "insufficient role", token: viewerLogin.Token, want: http.StatusForbidden},
+		{name: "authorized response", token: owner.Token, want: http.StatusOK},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := authenticatedReadRequest(http.MethodGet, "/api/v1/private", test.token)
+			if test.token == "" {
+				request.Header.Del("Cookie")
+			}
+			response := httptest.NewRecorder()
+			protected(response, request)
+			if response.Code != test.want {
+				t.Fatalf("status=%d, want %d: %s", response.Code, test.want, response.Body.String())
+			}
+			if response.Header().Get("Cache-Control") != "no-store" {
+				t.Fatalf("authenticated API response lacks no-store: status=%d headers=%v", response.Code, response.Header())
+			}
+		})
+	}
+}
+
 func TestAuthenticatedSSEClosesAfterSessionRevocation(t *testing.T) {
 	h := newAuthHarness(t)
 	credential, err := h.auth.Login(context.Background(), "owner", h.password, "127.0.0.1")
@@ -233,6 +279,31 @@ func TestAuthenticatedSSEClosesAfterSessionRevocation(t *testing.T) {
 	line, err := reader.ReadString('\n')
 	if err != nil || line != "event: session\n" {
 		t.Fatalf("first SSE line=%q err=%v", line, err)
+	}
+	line, err = reader.ReadString('\n')
+	if err != nil || !strings.HasPrefix(line, "data: ") {
+		t.Fatalf("SSE data line=%q err=%v", line, err)
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(strings.TrimPrefix(strings.TrimSpace(line), "data: ")), &payload); err != nil {
+		t.Fatalf("decode session-ready payload %q: %v", line, err)
+	}
+	if len(payload) != 4 {
+		t.Fatalf("session-ready event added an unreviewed field (possible Project payload): %s", line)
+	}
+	var eventType string
+	if err := json.Unmarshal(payload["type"], &eventType); err != nil || eventType != "session.ready" {
+		t.Fatalf("session-ready event type=%q err=%v", eventType, err)
+	}
+	for _, key := range []string{"user", "hub_id", "fingerprint"} {
+		if len(payload[key]) == 0 {
+			t.Fatalf("session-ready event is missing %q: %s", key, line)
+		}
+	}
+	for _, key := range []string{"project_id", "runtime_snapshot_id", "device_id", "session_id"} {
+		if _, exists := payload[key]; exists {
+			t.Fatalf("session-ready event disclosed scoped %q data: %s", key, line)
+		}
 	}
 	if _, err := reader.ReadString('\n'); err != nil {
 		t.Fatal(err)

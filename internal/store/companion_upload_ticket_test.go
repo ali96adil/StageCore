@@ -9,6 +9,7 @@ import (
 
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/domain"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/snapshot"
 	"github.com/ali96adil/StageCore/internal/store"
 )
@@ -96,6 +97,84 @@ func TestCompanionUploadTicketAuthorityAndLifecycle(t *testing.T) {
 	}
 	if _, err := s.AuthorizeCompanionUploadTicket(ctx, grant.Credential); !errors.Is(err, domain.ErrConflict) {
 		t.Fatalf("completed ticket authorize err=%v", err)
+	}
+
+	// Use the real authorization tables and share the same upload scope with
+	// the legacy ticket exercised above.
+	now := fixedTime.UnixMicro()
+	for _, user := range []struct{ id, role string }{{"owner", "OWNER"}, {"operator", "OPERATOR"}} {
+		if _, err := handle.DB.ExecContext(ctx, `
+			INSERT INTO local_users (user_id, username, password_hash, role, created_at_us, updated_at_us)
+			VALUES (?, ?, 'unused', ?, ?, ?)`, user.id, user.id, user.role, now, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, id := range []string{"issuer", "replacement"} {
+		if _, err := handle.DB.ExecContext(ctx, `
+			INSERT INTO browser_sessions (session_id, user_id, token_sha256, csrf_sha256, issued_at_us, expires_at_us, last_seen_at_us)
+			VALUES (?, 'operator', ?, ?, ?, ?, ?)`, id, []byte(id), []byte(id), now, now+int64(time.Hour/time.Microsecond), now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	access, err := projectaccess.New(handle.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	setPermissions := func(permissions ...projectaccess.Permission) {
+		t.Helper()
+		if err := access.SetPermissions(ctx, "owner", "operator", project.ID, append(permissions, projectaccess.ProjectView)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	bound := store.CreateCompanionUploadTicketParams{
+		CompanionID: companion.ID, RuntimeSessionID: runtimeSession.ID,
+		OperationID: "bound-completion", EnvironmentManifestID: environment.ID,
+		MachineRoleID: role.ID, RuntimeSnapshotID: runtimeSnapshot.ID,
+		IssuerBrowserSessionID: "issuer", IssuerRequiresProjectGrants: true,
+		Purpose: store.CompanionUploadExecutionEnvironmentCapture,
+		ExpectedContentHash: expectedHash, ExpectedSizeBytes: 4096,
+		ExpiresAt: fixedTime.Add(10 * time.Minute),
+	}
+	setPermissions(projectaccess.RehearsalControl)
+	if _, err := s.CreateCompanionUploadTicket(ctx, bound); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("partial grant issued ticket: %v", err)
+	}
+	setPermissions(projectaccess.RehearsalControl, projectaccess.MediaRead)
+	issue := func(operationID string) store.CompanionUploadTicketGrant {
+		t.Helper()
+		bound.OperationID = operationID
+		ticket, err := s.CreateCompanionUploadTicket(ctx, bound)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ticket
+	}
+	grantLoss := issue("bound-grant-loss")
+	sessionLoss := issue("bound-session-loss")
+	if _, err := s.AuthorizeCompanionUploadTicket(ctx, sessionLoss.Credential); err != nil {
+		t.Fatal(err)
+	}
+	setPermissions(projectaccess.MediaRead)
+	if _, err := s.AuthorizeCompanionUploadTicket(ctx, grantLoss.Credential); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("revoked grant authorized transfer: %v", err)
+	}
+	setPermissions(projectaccess.RehearsalControl, projectaccess.MediaRead)
+	if _, err := s.AuthorizeCompanionUploadTicket(ctx, grantLoss.Credential); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("restored grant revived cancelled transfer: %v", err)
+	}
+	if _, err := handle.DB.ExecContext(ctx, "UPDATE browser_sessions SET revoked_at_us = ? WHERE session_id = 'issuer'", now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CompleteCompanionUploadTicket(ctx, sessionLoss.Ticket.ID, expectedHash, 4096); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("revoked session completed transfer: %v", err)
+	}
+	if err := s.CheckCompanionUploadIssuer(ctx, bound); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("revoked session authorized receipt replay: %v", err)
+	}
+	bound.IssuerBrowserSessionID = "replacement"
+	replacement := issue("bound-replacement")
+	if _, err := s.CompleteCompanionUploadTicket(ctx, replacement.Ticket.ID, expectedHash, 4096); err != nil {
+		t.Fatal(err)
 	}
 
 	staleGrant, err := s.CreateCompanionUploadTicket(ctx, store.CreateCompanionUploadTicketParams{

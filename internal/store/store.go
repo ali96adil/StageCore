@@ -7,21 +7,28 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/domain"
 )
 
 type Store struct {
-	db    *sql.DB
-	clock clock.Clock
+	db                    *sql.DB
+	clock                 clock.Clock
+	outputReservationLock sync.Mutex
+	outputReservations    map[string]map[string]string
 }
 
 func New(database *sql.DB, c clock.Clock) *Store {
 	if c == nil {
 		c = clock.Real{}
 	}
-	return &Store{db: database, clock: c}
+	return &Store{db: database, clock: c, outputReservations: make(map[string]map[string]string)}
+}
+
+type execer interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
 }
 
 type queryer interface {

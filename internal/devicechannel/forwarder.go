@@ -145,7 +145,10 @@ func (f *Forwarder) Execute(ctx context.Context, req capability.Request) capabil
 
 	// Snapshot/session resolution may have taken time while STOP or Blackout
 	// cancelled the parent Cue. Check again at the final dispatch boundary.
-	if err := waitCtx.Err(); err != nil {
+	if err := capability.CheckDispatch(waitCtx); err != nil {
+		if errors.Is(err, capability.ErrDispatchAuthorityRevoked) {
+			return stageDeviceFailure(capability.DispatchAuthorityRevokedCode, err.Error())
+		}
 		return cancelledBeforeDispatch(err)
 	}
 	command, err := f.dispatcher.Dispatch(waitCtx, deviceexperience.CreateCommandInput{

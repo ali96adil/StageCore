@@ -11,6 +11,7 @@ import (
 	"math"
 	"strings"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/stagelaser"
 )
 
@@ -352,6 +353,9 @@ func (r *Repository) CommitStageLaserSafeAssignment(
 		in.ConnectionGeneration, challengeHex, string(in.AckObservation.StateQuality), nowUS)
 	if err != nil {
 		return StageLaserAssignmentCommit{}, fmt.Errorf("record StageLaser assignment audit: %w", err)
+	}
+	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
+		return StageLaserAssignmentCommit{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return StageLaserAssignmentCommit{}, fmt.Errorf("commit StageLaser assignment: %w", err)

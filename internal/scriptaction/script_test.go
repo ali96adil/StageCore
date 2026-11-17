@@ -22,11 +22,11 @@ func TestScriptActionSuccessWithoutShellOrInheritedEnvironment(t *testing.T) {
 	marker := t.TempDir() + "/success.txt"
 	target, _ := json.Marshal(map[string]any{
 		"executable": executable,
-		"arguments": []string{"-test.run=TestScriptHelperSuccess", "--", marker},
+		"arguments":  []string{"-test.run=TestScriptHelperSuccess", "--", marker},
 	})
 	result := New().Execute(context.Background(), capability.Request{
 		ExecutionID: "script-success", Capability: CapabilityKey,
-		Target: &capability.Target{Ref: "SCRIPT-LOCAL", LogicalType: "script", Configuration: target},
+		Target:     &capability.Target{Ref: "SCRIPT-LOCAL", LogicalType: "script", Configuration: target},
 		Parameters: json.RawMessage(`{}`), TimeoutMS: 5000,
 	})
 	if result.Result != domain.ExecutionCompleted || result.AckLevel != contracts.AckAccepted || result.ErrorCode != "" {
@@ -49,11 +49,11 @@ func TestScriptActionTimeoutTerminatesAndDoesNotRetry(t *testing.T) {
 	marker := t.TempDir() + "/timeout.txt"
 	target, _ := json.Marshal(map[string]any{
 		"executable": executable,
-		"arguments": []string{"-test.run=TestScriptHelperTimeout", "--", marker},
+		"arguments":  []string{"-test.run=TestScriptHelperTimeout", "--", marker},
 	})
 	result := New().Execute(context.Background(), capability.Request{
 		ExecutionID: "script-timeout", Capability: CapabilityKey,
-		Target: &capability.Target{Ref: "SCRIPT-SLOW", LogicalType: "script", Configuration: target},
+		Target:     &capability.Target{Ref: "SCRIPT-SLOW", LogicalType: "script", Configuration: target},
 		Parameters: json.RawMessage(`{}`), TimeoutMS: 1000,
 	})
 	if result.Result != domain.ExecutionTimedOut || result.ErrorCode != "SCRIPT_TIMEOUT" || result.AckLevel != contracts.AckAccepted {
@@ -80,6 +80,32 @@ func TestScriptActionRequiresSecretStoreForSecretReference(t *testing.T) {
 	})
 	if result.Result != domain.ExecutionFailed || result.ErrorCode != "SECRET_STORE_REQUIRED" || result.AckLevel != contracts.AckNone {
 		t.Fatalf("result=%+v", result)
+	}
+}
+
+func TestScriptActionDoesNotStartChildAfterDispatchAuthorityRevocation(t *testing.T) {
+	marker := t.TempDir() + "/script-started.txt"
+	target, err := json.Marshal(map[string]any{
+		"executable": "/bin/sh",
+		"arguments":  []string{"-c", `printf started > "$1"`, "script-test", marker},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := capability.WithDispatchCheck(context.Background(), func(context.Context) error {
+		return capability.ErrDispatchAuthorityRevoked
+	})
+	result := New().Execute(ctx, capability.Request{
+		ExecutionID: "script-revoked-before-start", Capability: CapabilityKey,
+		Target:     &capability.Target{Ref: "SCRIPT-LOCAL", LogicalType: "script", Configuration: target},
+		Parameters: json.RawMessage(`{}`), TimeoutMS: 1000,
+	})
+	if result.Result != domain.ExecutionFailed || result.ErrorCode != capability.DispatchAuthorityRevokedCode ||
+		result.AckLevel != contracts.AckNone || !result.DispatchNotAttempted {
+		t.Fatalf("revoked Script Action was not safely rejected: %+v", result)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("revoked Script Action started its child process; marker stat error=%v", err)
 	}
 }
 

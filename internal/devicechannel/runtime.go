@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/companionauth"
 	"github.com/ali96adil/StageCore/internal/contracts"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
@@ -40,40 +41,42 @@ func WithDeviceLivenessTimeout(timeout time.Duration) RuntimeOption {
 }
 
 type Runtime struct {
-	repository      *deviceexperience.Repository
-	auth            *companionauth.Service
+	repository          *deviceexperience.Repository
+	auth                *companionauth.Service
 	firmwareMaintenance *deviceupdate.LifecycleStore
-	livenessTimeout time.Duration
+	livenessTimeout     time.Duration
 
-	transferMu     sync.Mutex
-	mu             sync.Mutex
-	connections    map[string]*connection
-	inflight       map[string]*connection
-	pendingBlackouts        map[string]*pendingBlackout
-	pendingV2LightingProbes map[string]*pendingV2LightingProbe
-	latestV2SoftwareLevels  map[string]V2SoftwareLevels
+	transferMu                   sync.Mutex
+	mu                           sync.Mutex
+	connections                  map[string]*connection
+	inflight                     map[string]*connection
+	pendingBlackouts             map[string]*pendingBlackout
+	pendingV2LightingProbes      map[string]*pendingV2LightingProbe
+	latestV2SoftwareLevels       map[string]V2SoftwareLevels
 	pendingTabletAssignments     map[string]*pendingTabletAssignment
 	pendingStageLaserAssignments map[string]*pendingStageLaserAssignment
 	pendingLightingActivations   map[string]*pendingLightingActivation
-	pendingSetupAPPassword       map[string]chan SetupAPPasswordResult
-	assignmentTransitions      map[string]bool
-	autoProbeV2              bool
-	nextGeneration           int64
-	closed                   bool
+	pendingSetupAPPassword       map[string]pendingSetupAPResult
+	assignmentTransitions        map[string]bool
+	autoProbeV2                  bool
+	nextGeneration               int64
+	closed                       bool
 }
 
 type connection struct {
-	owner           *Runtime
-	ws              *websocket.Conn
-	deviceID        string
-	protocolVersion string
-	sessionToken    string
-	advertisedCapabilities []string
+	owner                   *Runtime
+	ws                      *websocket.Conn
+	deviceID                string
+	protocolVersion         string
+	sessionToken            string
+	sessionID               string
+	advertisedCapabilities  []string
 	generation              int64
-	activeProjectID          string
-	activeRuntimeSnapshotID  string
-	activeAssignmentEpoch    int64
-	commandsEnabled          bool
+	activeProjectID         string
+	activeRuntimeSnapshotID string
+	activeAssignmentEpoch   int64
+	telemetryProjectID      string
+	commandsEnabled         bool
 	writeMu                 sync.Mutex
 	once                    sync.Once
 	closed                  chan struct{}
@@ -101,35 +104,35 @@ type helloMessage struct {
 }
 
 type inboundMessage struct {
-	Type          string                     `json:"type"`
-	SchemaVersion int                        `json:"schema_version"`
-	DeviceID      string                     `json:"device_id"`
-	ProjectID              string                     `json:"project_id,omitempty"`
-	RuntimeSnapshotID      string                     `json:"runtime_snapshot_id,omitempty"`
-	AssignmentID           string                     `json:"assignment_id,omitempty"`
-	ActivationID           string                     `json:"activation_id,omitempty"`
-	ConfigurationHash      string                     `json:"configuration_hash,omitempty"`
-	CommandID              string                     `json:"command_id,omitempty"`
-	TransferID             string                     `json:"transfer_id,omitempty"`
-	UpdateID               string                     `json:"update_id,omitempty"`
-	RequestID              string                     `json:"request_id,omitempty"`
-	MaintenanceState       string                     `json:"maintenance_state,omitempty"`
-	Detail                 string                     `json:"detail,omitempty"`
-	AssignmentEpoch        int64                      `json:"assignment_epoch,omitempty"`
-	ConnectionGeneration   int64                      `json:"connection_generation,omitempty"`
-	Challenge              string                     `json:"challenge,omitempty"`
-	SafeMedia              bool                       `json:"safe_media,omitempty"`
-	Blackout               bool                       `json:"blackout,omitempty"`
-	LevelsKnown bool `json:"levels_known,omitempty"`
-	ChannelLevels []int `json:"channel_levels,omitempty"`
-	Status        contracts.CommandStatus    `json:"status,omitempty"`
-	Payload       json.RawMessage            `json:"payload,omitempty"`
-	Error         *contracts.ContractError   `json:"error,omitempty"`
-	Readiness     deviceexperience.Readiness `json:"readiness,omitempty"`
-	ObservedState json.RawMessage            `json:"observed_state,omitempty"`
-	NetworkState  json.RawMessage            `json:"network_state,omitempty"`
-	LatencyMS     *float64                   `json:"latency_ms,omitempty"`
-	JitterMS      *float64                   `json:"jitter_ms,omitempty"`
+	Type                 string                     `json:"type"`
+	SchemaVersion        int                        `json:"schema_version"`
+	DeviceID             string                     `json:"device_id"`
+	ProjectID            string                     `json:"project_id,omitempty"`
+	RuntimeSnapshotID    string                     `json:"runtime_snapshot_id,omitempty"`
+	AssignmentID         string                     `json:"assignment_id,omitempty"`
+	ActivationID         string                     `json:"activation_id,omitempty"`
+	ConfigurationHash    string                     `json:"configuration_hash,omitempty"`
+	CommandID            string                     `json:"command_id,omitempty"`
+	TransferID           string                     `json:"transfer_id,omitempty"`
+	UpdateID             string                     `json:"update_id,omitempty"`
+	RequestID            string                     `json:"request_id,omitempty"`
+	MaintenanceState     string                     `json:"maintenance_state,omitempty"`
+	Detail               string                     `json:"detail,omitempty"`
+	AssignmentEpoch      int64                      `json:"assignment_epoch,omitempty"`
+	ConnectionGeneration int64                      `json:"connection_generation,omitempty"`
+	Challenge            string                     `json:"challenge,omitempty"`
+	SafeMedia            bool                       `json:"safe_media,omitempty"`
+	Blackout             bool                       `json:"blackout,omitempty"`
+	LevelsKnown          bool                       `json:"levels_known,omitempty"`
+	ChannelLevels        []int                      `json:"channel_levels,omitempty"`
+	Status               contracts.CommandStatus    `json:"status,omitempty"`
+	Payload              json.RawMessage            `json:"payload,omitempty"`
+	Error                *contracts.ContractError   `json:"error,omitempty"`
+	Readiness            deviceexperience.Readiness `json:"readiness,omitempty"`
+	ObservedState        json.RawMessage            `json:"observed_state,omitempty"`
+	NetworkState         json.RawMessage            `json:"network_state,omitempty"`
+	LatencyMS            *float64                   `json:"latency_ms,omitempty"`
+	JitterMS             *float64                   `json:"jitter_ms,omitempty"`
 }
 
 type executeMessage struct {
@@ -148,20 +151,20 @@ type displayStateMessage struct {
 
 func New(repository *deviceexperience.Repository, auth *companionauth.Service, options ...RuntimeOption) *Runtime {
 	runtime := &Runtime{
-		repository:               repository,
-		auth:                     auth,
-		livenessTimeout:          defaultDeviceLivenessTimeout,
-		connections:              make(map[string]*connection),
-		inflight:                 make(map[string]*connection),
-		pendingBlackouts:          make(map[string]*pendingBlackout),
-		pendingV2LightingProbes:   make(map[string]*pendingV2LightingProbe),
-		latestV2SoftwareLevels:    make(map[string]V2SoftwareLevels),
+		repository:                   repository,
+		auth:                         auth,
+		livenessTimeout:              defaultDeviceLivenessTimeout,
+		connections:                  make(map[string]*connection),
+		inflight:                     make(map[string]*connection),
+		pendingBlackouts:             make(map[string]*pendingBlackout),
+		pendingV2LightingProbes:      make(map[string]*pendingV2LightingProbe),
+		latestV2SoftwareLevels:       make(map[string]V2SoftwareLevels),
 		pendingTabletAssignments:     make(map[string]*pendingTabletAssignment),
 		pendingStageLaserAssignments: make(map[string]*pendingStageLaserAssignment),
 		pendingLightingActivations:   make(map[string]*pendingLightingActivation),
-		pendingSetupAPPassword:       make(map[string]chan SetupAPPasswordResult),
-		assignmentTransitions:      make(map[string]bool),
-		autoProbeV2:               os.Getenv("STAGECORE_EXPERIMENTAL_V2_AUTO_PROBE") == "1",
+		pendingSetupAPPassword:       make(map[string]pendingSetupAPResult),
+		assignmentTransitions:        make(map[string]bool),
+		autoProbeV2:                  os.Getenv("STAGECORE_EXPERIMENTAL_V2_AUTO_PROBE") == "1",
 	}
 	for _, option := range options {
 		if option != nil {
@@ -215,6 +218,19 @@ type V2RuntimeScope struct {
 }
 
 func (r *Runtime) CurrentV2Scope(deviceID string) (V2RuntimeScope, bool) {
+	return r.currentV2Scope(deviceID, "")
+}
+
+// CurrentV2ScopeForSession binds a request to the exact session that opened
+// the current v2 socket. Callers must still validate the session credential.
+func (r *Runtime) CurrentV2ScopeForSession(deviceID, sessionID string) (V2RuntimeScope, bool) {
+	if sessionID == "" {
+		return V2RuntimeScope{}, false
+	}
+	return r.currentV2Scope(deviceID, sessionID)
+}
+
+func (r *Runtime) currentV2Scope(deviceID, sessionID string) (V2RuntimeScope, bool) {
 	if r == nil {
 		return V2RuntimeScope{}, false
 	}
@@ -223,9 +239,11 @@ func (r *Runtime) CurrentV2Scope(deviceID string) (V2RuntimeScope, bool) {
 	if r.closed {
 		return V2RuntimeScope{}, false
 	}
-	current := r.connections[strings.TrimSpace(deviceID)]
+	deviceID = strings.TrimSpace(deviceID)
+	current := r.connections[deviceID]
 	if current == nil || current.protocolVersion != deviceexperience.ProtocolVersion2 ||
-		current.generation <= 0 {
+		current.generation <= 0 ||
+		(sessionID != "" && (current.sessionID != sessionID || r.assignmentTransitions[deviceID])) {
 		return V2RuntimeScope{}, false
 	}
 	select {
@@ -234,12 +252,12 @@ func (r *Runtime) CurrentV2Scope(deviceID string) (V2RuntimeScope, bool) {
 	default:
 	}
 	return V2RuntimeScope{
-		Generation: current.generation,
-		ProjectID: current.activeProjectID,
+		Generation:        current.generation,
+		ProjectID:         current.activeProjectID,
 		RuntimeSnapshotID: current.activeRuntimeSnapshotID,
-		AssignmentEpoch: current.activeAssignmentEpoch,
-		CommandsEnabled: current.commandsEnabled,
-		Capabilities: append([]string(nil), current.advertisedCapabilities...),
+		AssignmentEpoch:   current.activeAssignmentEpoch,
+		CommandsEnabled:   current.commandsEnabled,
+		Capabilities:      append([]string(nil), current.advertisedCapabilities...),
 	}, true
 }
 
@@ -309,6 +327,7 @@ func (r *Runtime) Dispatch(ctx context.Context, input deviceexperience.CreateCom
 	schemaVersion := runtimeSchemaVersion
 	scopeReady := true
 	capabilityReady := true
+	generationReady := true
 	if current != nil && current.protocolVersion == deviceexperience.ProtocolVersion2 {
 		schemaVersion = 2
 		scopeReady = current.commandsEnabled &&
@@ -317,8 +336,12 @@ func (r *Runtime) Dispatch(ctx context.Context, input deviceexperience.CreateCom
 			current.activeAssignmentEpoch > 0
 		capabilityReady = requiredCapability == "" ||
 			containsCapability(current.advertisedCapabilities, requiredCapability)
+		if stagelaser.CommandCapability(command.Envelope.CommandType) != "" {
+			generationReady = (command.Envelope.ControlGeneration > 0) ==
+				containsCapability(current.advertisedCapabilities, stagelaser.ControlGenerationCapability)
+		}
 	}
-	if !closed && current != nil && !transition && scopeReady && capabilityReady {
+	if !closed && current != nil && !transition && scopeReady && capabilityReady && generationReady {
 		r.inflight[command.Envelope.CommandID] = current
 	}
 	r.mu.Unlock()
@@ -334,14 +357,30 @@ func (r *Runtime) Dispatch(ctx context.Context, input deviceexperience.CreateCom
 	if !capabilityReady {
 		return r.failCommand(ctx, command, "DEVICE_CAPABILITY_MISSING", "Current authenticated Stage Device socket did not advertise the required capability")
 	}
+	if !generationReady {
+		return r.failCommand(ctx, command, "DEVICE_CONTROL_GENERATION_MISMATCH", "StageLaser command and current authenticated socket require different generation protocols")
+	}
 	message := executeMessage{
 		Type:          "command.execute",
 		SchemaVersion: schemaVersion,
 		DeviceID:      command.DeviceID,
 		Command:       command.Envelope,
 	}
-	if err := current.send(message); err != nil {
+	if err := current.sendAuthorized(ctx, message); err != nil {
 		r.unbindCommand(command.Envelope.CommandID, current)
+		if errors.Is(err, capability.ErrDispatchAuthorityRevoked) {
+			return r.terminateDispatch(ctx, command, contracts.CommandFailed, capability.DispatchAuthorityRevokedCode, "PERMISSION", err.Error(), false)
+		}
+		if ctx.Err() != nil {
+			result := cancelledBeforeDispatch(ctx.Err())
+			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
+			defer cancel()
+			status := contracts.CommandCancelled
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				status = contracts.CommandTimedOut
+			}
+			return r.terminateDispatch(cleanupCtx, command, status, result.ErrorCode, "TRANSPORT", result.ResponseSummary, false)
+		}
 		current.close()
 		return r.failCommand(ctx, command, "TRANSPORT_SEND_FAILED", err.Error())
 	}
@@ -403,7 +442,10 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 	// allocated and it has become the current connection. This ordering
 	// prevents an exhausted/unavailable counter from creating a ghost
 	// ONLINE device record that could mislead Operator commissioning.
-	current := &connection{owner: r, ws: ws, deviceID: device.ID, protocolVersion: device.ProtocolVersion, sessionToken: token, advertisedCapabilities: append([]string(nil), hello.Capabilities...), closed: make(chan struct{})}
+	current := &connection{owner: r, ws: ws, deviceID: device.ID, protocolVersion: device.ProtocolVersion, sessionToken: token, sessionID: session.ID, advertisedCapabilities: append([]string(nil), hello.Capabilities...), closed: make(chan struct{})}
+	if !isV2 {
+		current.telemetryProjectID = device.ProjectID
+	}
 	current.markActivity()
 	previous, err := r.register(ctx, current)
 	if err != nil {
@@ -439,6 +481,9 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 		Details:        json.RawMessage(`{"authenticated":true}`),
 	}); err != nil || !same {
 		return
+	}
+	if !isV2 {
+		r.recordTransportConnected(ctx, current, device.ProjectID)
 	}
 	if isV2 {
 		if err := r.reconcileFirmwarePostReboot(ctx, current, device); err != nil {
@@ -688,15 +733,15 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 			// Receipt is informational: it explicitly carries no authority
 			// to switch on lights, replay a snapshot or execute cues.
 			if err := current.send(map[string]any{
-				"type": "assignment.epoch_ack_receipt",
-				"schema_version": 2,
-				"device_id": device.ID,
-				"project_id": ack.ProjectID,
-				"assignment_epoch": ack.AssignmentEpoch,
+				"type":                  "assignment.epoch_ack_receipt",
+				"schema_version":        2,
+				"device_id":             device.ID,
+				"project_id":            ack.ProjectID,
+				"assignment_epoch":      ack.AssignmentEpoch,
 				"connection_generation": ack.ConnectionGeneration,
-				"state": "BLOCKED",
-				"commands_enabled": false,
-				"persisted": true,
+				"state":                 "BLOCKED",
+				"commands_enabled":      false,
+				"persisted":             true,
 			}); err != nil {
 				return
 			}
@@ -717,7 +762,7 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 				return
 			}
 		case "maintenance.setup_ap_password.result":
-			if (!isV2) {
+			if !isV2 {
 				return
 			}
 			if _, err := r.auth.ValidateEstablishedRuntimeSession(ctx, session.ID); err != nil {
@@ -842,8 +887,8 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 
 func (r *Runtime) register(ctx context.Context, current *connection) (*connection, error) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	if r.closed {
+		r.mu.Unlock()
 		return nil, fmt.Errorf("stage device runtime closed")
 	}
 	if current.protocolVersion == deviceexperience.ProtocolVersion2 {
@@ -852,6 +897,7 @@ func (r *Runtime) register(ctx context.Context, current *connection) (*connectio
 		// process. Allocation is atomic across overlapping Hub instances.
 		generation, err := r.repository.AllocateV2ConnectionGeneration(ctx)
 		if err != nil {
+			r.mu.Unlock()
 			return nil, err // fail closed; never issue an in-memory fallback
 		}
 		current.generation = generation
@@ -859,15 +905,48 @@ func (r *Runtime) register(ctx context.Context, current *connection) (*connectio
 		// v1 command socket bindings are process-local; do not alter its
 		// legacy transport/command behavior or require a v2 SQL write.
 		if r.nextGeneration == math.MaxInt64 {
+			r.mu.Unlock()
 			return nil, fmt.Errorf("legacy Stage Device generation exhausted")
 		}
 		r.nextGeneration++
 		current.generation = r.nextGeneration
 	}
 	previous := r.connections[current.deviceID]
+	previousProjectID := ""
+	transitionAt := time.Now().UTC()
+	if previous != nil {
+		previousProjectID = previous.telemetryProjectID
+	}
 	delete(r.latestV2SoftwareLevels, current.deviceID)
 	r.connections[current.deviceID] = current
+	r.mu.Unlock()
+	if previous != nil && previousProjectID != "" {
+		telemetryCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_ = r.repository.RecordTransportTransition(telemetryCtx, previousProjectID, previous.deviceID, false,
+			previous.generation, deviceexperience.TransportDisconnectConnectionReplaced, transitionAt)
+		cancel()
+	}
 	return previous, nil
+}
+
+func (r *Runtime) recordTransportConnected(ctx context.Context, current *connection, projectID string) {
+	if current == nil {
+		return
+	}
+	r.mu.Lock()
+	same := !r.closed && r.connections[current.deviceID] == current
+	occurredAt := time.Now().UTC()
+	if same {
+		current.telemetryProjectID = strings.TrimSpace(projectID)
+	}
+	r.mu.Unlock()
+	if !same || strings.TrimSpace(projectID) == "" {
+		return
+	}
+	// A missing telemetry write must not revoke an authenticated socket or
+	// change command authority. The report will simply have no connection event.
+	_ = r.repository.RecordTransportTransition(ctx, projectID, current.deviceID, true,
+		current.generation, "", occurredAt)
 }
 
 func (r *Runtime) unregister(current *connection) {
@@ -876,6 +955,8 @@ func (r *Runtime) unregister(current *connection) {
 	}
 	pending := make([]string, 0)
 	wasCurrent := false
+	disconnectProjectID := ""
+	disconnectedAt := time.Time{}
 	r.mu.Lock()
 	if r.connections[current.deviceID] == current {
 		wasCurrent = true
@@ -895,6 +976,8 @@ func (r *Runtime) unregister(current *connection) {
 			})
 			cancel()
 		}
+		disconnectProjectID = current.telemetryProjectID
+		disconnectedAt = time.Now().UTC()
 	}
 	for commandID, bound := range r.inflight {
 		if bound == current {
@@ -905,6 +988,12 @@ func (r *Runtime) unregister(current *connection) {
 	r.mu.Unlock()
 	if wasCurrent {
 		r.interruptFirmwareConnection(current)
+		if disconnectProjectID != "" {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			_ = r.repository.RecordTransportTransition(ctx, disconnectProjectID, current.deviceID, false,
+				current.generation, deviceexperience.TransportDisconnectSocketClosed, disconnectedAt)
+			cancel()
+		}
 	}
 	current.close()
 
@@ -914,7 +1003,6 @@ func (r *Runtime) unregister(current *connection) {
 		r.failInterruptedCommand(ctx, commandID, current.deviceID)
 	}
 }
-
 
 func (c *connection) markActivity() {
 	if c == nil {
@@ -972,18 +1060,22 @@ func (r *Runtime) failInterruptedCommand(ctx context.Context, commandID, deviceI
 }
 
 func (r *Runtime) failCommand(ctx context.Context, command deviceexperience.DeviceCommand, code, message string) (deviceexperience.DeviceCommand, error) {
+	return r.terminateDispatch(ctx, command, contracts.CommandFailed, code, "TRANSPORT", message, true)
+}
+
+func (r *Runtime) terminateDispatch(ctx context.Context, command deviceexperience.DeviceCommand, status contracts.CommandStatus, code, category, message string, retryable bool) (deviceexperience.DeviceCommand, error) {
 	result, _ := json.Marshal(contracts.CommandResult{
 		CommandID: command.Envelope.CommandID,
-		Status:    contracts.CommandFailed,
+		Status:    status,
 		Error: &contracts.ContractError{
 			ErrorCode:        code,
-			Category:         "TRANSPORT",
+			Category:         category,
 			Message:          message,
-			Retryable:        true,
+			Retryable:        retryable,
 			AffectedEntityID: command.DeviceID,
 		},
 	})
-	completed, err := r.repository.CompleteCommand(ctx, command.Envelope.CommandID, contracts.CommandFailed, result)
+	completed, err := r.repository.CompleteCommand(ctx, command.Envelope.CommandID, status, result)
 	if err != nil {
 		return deviceexperience.DeviceCommand{}, err
 	}
@@ -991,6 +1083,10 @@ func (r *Runtime) failCommand(ctx context.Context, command deviceexperience.Devi
 }
 
 func (c *connection) send(value any) error {
+	return c.sendAuthorized(context.Background(), value)
+}
+
+func (c *connection) sendAuthorized(ctx context.Context, value any) error {
 	if c == nil || c.ws == nil {
 		return errors.New("stage device connection unavailable")
 	}
@@ -1000,6 +1096,9 @@ func (c *connection) send(value any) error {
 	case <-c.closed:
 		return errors.New("stage device connection is closed")
 	default:
+	}
+	if err := capability.CheckDispatch(ctx); err != nil {
+		return err
 	}
 	return websocket.JSON.Send(c.ws, value)
 }

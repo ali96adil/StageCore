@@ -20,15 +20,29 @@ async function loadConfiguration() {
   const projectID = encodeURIComponent(state.project.project_id);
   const configuration = await api(`/api/v1/projects/${projectID}/configuration`);
   let machineRoles = { roles: [], companions: [] };
+  let routeHistory = { can_undo: false, can_redo: false };
+  let inputHistory = { can_undo: false, can_redo: false };
+  let outputHistory = { can_undo: false, can_redo: false };
   if (configurationEditable()) {
     try {
       machineRoles = await api(`/api/v1/projects/${projectID}/machine-roles`);
     } catch (_) {}
+    if (configuration.revision?.status === "DRAFT") {
+      try { routeHistory = await api(`/api/v1/projects/${projectID}/route-draft-history`); }
+      catch (_) {}
+      try { inputHistory = await api(`/api/v1/projects/${projectID}/input-draft-history`); }
+      catch (_) {}
+      try { outputHistory = await api(`/api/v1/projects/${projectID}/output-draft-history`); }
+      catch (_) {}
+    }
   }
   return {
     ...configuration,
     machine_roles: machineRoles.roles || [],
     companions: machineRoles.companions || [],
+    route_history: routeHistory,
+    input_history: inputHistory,
+    output_history: outputHistory,
   };
 }
 
@@ -67,7 +81,7 @@ async function renderConfiguration() {
     ${roleCanEdit && !editable ? `<div class="message warn">This revision backs a published Runtime Snapshot. Start a routing edit to fork a new Draft and refresh all revision-bound IDs before changing configuration.</div>` : ""}
 
     <div class="grid cards">
-      <article class="card">
+      <article class="card" data-draft-history-scope="none">
         <p class="eyebrow">TARGETS</p><h2>Logical target aliases</h2>
         <form id="targetForm" style="margin-top:14px">
           <div class="form-grid two">
@@ -81,7 +95,7 @@ async function renderConfiguration() {
           <div class="action-editor"><div class="section-title-row"><strong>${esc(target.logical_name)}</strong>${editable ? `<button class="button danger target-remove" type="button" data-alias-id="${esc(target.alias_id)}" data-target-name="${esc(target.logical_name)}">Remove</button>` : ""}</div><p class="muted">${esc(target.logical_type)}</p><pre class="mono muted">${esc(jsonText(target.configuration))}</pre></div>`).join("") : `<div class="empty">No logical targets yet.</div>`}</div>
       </article>
 
-      <article class="card">
+      <article class="card" data-draft-history-scope="input">
         <p class="eyebrow">INPUTS</p><h2>Runtime input definitions</h2>
         <form id="inputForm" data-input-id="" style="margin-top:14px">
           <div class="form-grid two">
@@ -93,11 +107,15 @@ async function renderConfiguration() {
           <label>Value schema JSON<textarea id="inputSchema" class="mono" rows="3" ${disabled}>{}</textarea></label>
           <div class="row-actions"><button id="inputSubmit" class="button primary" type="submit" ${disabled}>Add input</button><button id="inputCancelEdit" class="button ghost hidden" type="button" ${disabled}>Cancel edit</button></div>
         </form>
+        <div class="row-actions" aria-label="${f001Translate("Input Draft history")}">
+          <button id="inputHistoryUndo" class="button ghost" type="button" aria-keyshortcuts="Control+Z Meta+Z" ${!editable || !model.input_history?.can_undo ? "disabled" : ""}>${f001Translate("Undo input change")}</button>
+          <button id="inputHistoryRedo" class="button ghost" type="button" aria-keyshortcuts="Control+Shift+Z Control+Y Meta+Shift+Z Meta+Y" ${!editable || !model.input_history?.can_redo ? "disabled" : ""}>${f001Translate("Redo input change")}</button>
+        </div>
         <div class="actions-editor" style="margin-top:14px">${(model.inputs || []).length ? model.inputs.map((input) => `
           <div class="action-editor"><div class="section-title-row"><strong>${esc(input.name)}</strong>${editable ? `<div class="row-actions"><button class="button ghost input-edit" type="button" data-input-id="${esc(input.input_id)}">Edit</button><button class="button danger input-remove" type="button" data-input-id="${esc(input.input_id)}">Remove</button></div>` : ""}</div><p class="muted">${esc(input.source_ref)} · ${esc(input.event_type)} · ${input.enabled ? "ENABLED" : "DISABLED"}</p><p class="mono muted">${esc(input.input_id)}</p></div>`).join("") : `<div class="empty">No inputs yet.</div>`}</div>
       </article>
 
-      <article class="card">
+      <article class="card" data-draft-history-scope="output">
         <p class="eyebrow">OUTPUTS</p><h2>Capability outputs</h2>
         <form id="outputForm" data-output-id="" style="margin-top:14px">
           <div class="form-grid two">
@@ -112,14 +130,18 @@ async function renderConfiguration() {
             <button id="outputCancelEdit" class="button ghost hidden" type="button" ${disabled}>Cancel edit</button>
           </div>
         </form>
+        <div class="row-actions" aria-label="${f001Translate("Output Draft history")}">
+          <button id="outputHistoryUndo" class="button ghost" type="button" aria-keyshortcuts="Control+Z Meta+Z" ${!editable || !model.output_history?.can_undo ? "disabled" : ""}>${f001Translate("Undo output change")}</button>
+          <button id="outputHistoryRedo" class="button ghost" type="button" aria-keyshortcuts="Control+Shift+Z Control+Y Meta+Shift+Z Meta+Y" ${!editable || !model.output_history?.can_redo ? "disabled" : ""}>${f001Translate("Redo output change")}</button>
+        </div>
         <div class="actions-editor" style="margin-top:14px">${(model.outputs || []).length ? model.outputs.map((output) => `
           <div class="action-editor">
-            <div class="section-title-row"><strong>${esc(output.name)}</strong>${editable ? `<button class="button ghost output-edit" type="button" data-output-id="${esc(output.output_id)}">Edit</button>` : ""}</div>
+            <div class="section-title-row"><strong>${esc(output.name)}</strong>${editable ? `<div class="row-actions"><button class="button ghost output-edit" type="button" data-output-id="${esc(output.output_id)}">Edit</button><button class="button danger output-remove" type="button" data-output-id="${esc(output.output_id)}" data-output-name="${esc(output.name)}">Remove</button></div>` : ""}</div>
             <p class="muted">${esc(output.target_ref)} · ${esc(output.capability_key)}</p><p class="mono muted">${esc(output.output_id)}</p>
           </div>`).join("") : `<div class="empty">No outputs yet.</div>`}</div>
       </article>
 
-      <article class="card">
+      <article class="card" data-draft-history-scope="route">
         <p class="eyebrow">ROUTES</p><h2>Input → Cue/Output</h2>
         <form id="routeForm" data-route-id="" style="margin-top:14px">
           <div class="form-grid two">
@@ -137,6 +159,10 @@ async function renderConfiguration() {
           <label>Action parameters JSON<textarea id="routeParameters" class="mono" rows="3" ${disabled}>{}</textarea></label>
           <div class="row-actions"><button id="routeSubmit" class="button primary" type="submit" ${disabled}>Add route</button><button id="routeCancelEdit" class="button ghost hidden" type="button" ${disabled}>Cancel edit</button></div>
         </form>
+        <div class="row-actions" aria-label="${f001Translate("Route Draft history")}">
+          <button id="routeHistoryUndo" class="button ghost" type="button" aria-keyshortcuts="Control+Z Meta+Z" ${!editable || !model.route_history?.can_undo ? "disabled" : ""}>${f001Translate("Undo routing change")}</button>
+          <button id="routeHistoryRedo" class="button ghost" type="button" aria-keyshortcuts="Control+Y Control+Shift+Z Meta+Y Meta+Shift+Z" ${!editable || !model.route_history?.can_redo ? "disabled" : ""}>${f001Translate("Redo routing change")}</button>
+        </div>
         <div class="actions-editor" style="margin-top:14px">${(model.routes || []).length ? model.routes.map((route) => `
           <div class="action-editor"><div class="section-title-row"><strong>${esc(route.name)}</strong><div class="row-actions">${pill(route.enabled ? "ENABLED" : "DISABLED", route.enabled ? "good" : "neutral")}${editable && (route.actions || []).length === 1 ? `<button class="button ghost route-edit" type="button" data-route-id="${esc(route.route_id)}">Edit</button>` : ""}${editable ? `<button class="button ghost route-toggle" type="button" data-route-id="${esc(route.route_id)}">${route.enabled ? "Disable" : "Enable"}</button><button class="button danger route-remove" type="button" data-route-id="${esc(route.route_id)}">Remove</button>` : ""}</div></div><p class="muted">Input ${esc(route.input_id)} · ${esc(route.priority_class)} · ${(route.actions || []).length} action(s)</p><p class="mono muted">${esc(route.route_id)}</p></div>`).join("") : `<div class="empty">No routes yet.</div>`}</div>
       </article>
@@ -221,6 +247,54 @@ async function renderConfiguration() {
     </div>`;
 
   el("refreshConfiguration").addEventListener("click", () => renderConfiguration().catch(configurationError));
+  el("routeHistoryUndo").addEventListener("click", async () => {
+    try {
+      await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/route-draft-history`, {
+        method: "POST", json: { direction: "UNDO" },
+      });
+      await refreshProjectAndConfiguration();
+    } catch (error) { configurationError(error); }
+  });
+  el("routeHistoryRedo").addEventListener("click", async () => {
+    try {
+      await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/route-draft-history`, {
+        method: "POST", json: { direction: "REDO" },
+      });
+      await refreshProjectAndConfiguration();
+    } catch (error) { configurationError(error); }
+  });
+  el("inputHistoryUndo").addEventListener("click", async () => {
+    try {
+      await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/input-draft-history`, {
+        method: "POST", json: { direction: "UNDO" },
+      });
+      await refreshProjectAndConfiguration();
+    } catch (error) { configurationError(error); }
+  });
+  el("inputHistoryRedo").addEventListener("click", async () => {
+    try {
+      await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/input-draft-history`, {
+        method: "POST", json: { direction: "REDO" },
+      });
+      await refreshProjectAndConfiguration();
+    } catch (error) { configurationError(error); }
+  });
+  el("outputHistoryUndo").addEventListener("click", async () => {
+    try {
+      await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/output-draft-history`, {
+        method: "POST", json: { direction: "UNDO" },
+      });
+      await refreshProjectAndConfiguration();
+    } catch (error) { configurationError(error); }
+  });
+  el("outputHistoryRedo").addEventListener("click", async () => {
+    try {
+      await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/output-draft-history`, {
+        method: "POST", json: { direction: "REDO" },
+      });
+      await refreshProjectAndConfiguration();
+    } catch (error) { configurationError(error); }
+  });
   el("jumpMachineRoles")?.addEventListener("click", () => document.getElementById("machineRolesCard")?.scrollIntoView({ behavior: "smooth", block: "start" }));
   const startButton = el("startRoutingEdit");
   if (startButton) {
@@ -502,6 +576,16 @@ async function renderConfiguration() {
       outputForm.scrollIntoView({ behavior: "smooth", block: "center" });
     });
   });
+  document.querySelectorAll(".output-remove").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const outputName = button.dataset.outputName || "this output";
+      if (!window.confirm(`Remove output "${outputName}"? Removal is blocked while a Route still references it.`)) return;
+      try {
+        await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/outputs/${encodeURIComponent(button.dataset.outputId)}?confirm=true`, { method: "DELETE" });
+        await refreshProjectAndConfiguration();
+      } catch (error) { configurationError(error); }
+    });
+  });
   el("outputCancelEdit").addEventListener("click", resetOutputEditor);
   outputForm.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -670,3 +754,36 @@ navigate = async function stagecoreConfigurationNavigate(page) {
   try { await renderConfiguration(); }
   catch (error) { configurationError(error); }
 };
+
+const configurationDraftHistoryButtonIDs = {
+  route: {undo: "routeHistoryUndo", redo: "routeHistoryRedo"},
+  input: {undo: "inputHistoryUndo", redo: "inputHistoryRedo"},
+  output: {undo: "outputHistoryUndo", redo: "outputHistoryRedo"},
+};
+let activeConfigurationDraftHistoryScope = "route";
+const rememberConfigurationDraftHistoryScope = (event) => {
+  const card = event.target?.closest?.(".card");
+  if (card) activeConfigurationDraftHistoryScope = card.dataset.draftHistoryScope || "";
+};
+document.addEventListener("focusin", rememberConfigurationDraftHistoryScope);
+document.addEventListener("pointerdown", rememberConfigurationDraftHistoryScope);
+
+document.addEventListener("keydown", (event) => {
+  if (state.page !== "configuration" || event.defaultPrevented || event.isComposing ||
+      !(event.ctrlKey || event.metaKey) || event.altKey || document.querySelector("dialog[open]")) return;
+  const target = event.target;
+  if (target?.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(String(target?.tagName || "").toUpperCase()) ||
+      target?.closest?.("input,textarea,select,[contenteditable='true']")) return;
+  const key = String(event.code || event.key || "").toLowerCase();
+  const isUndo = key === "keyz" || key === "z";
+  const isRedo = key === "keyy" || key === "y";
+  const wantsUndo = isUndo && !event.shiftKey;
+  const wantsRedo = (isRedo && !event.shiftKey) || (isUndo && event.shiftKey);
+  if (!wantsUndo && !wantsRedo) return;
+  const scope = event.target?.closest?.(".card")?.dataset?.draftHistoryScope || activeConfigurationDraftHistoryScope;
+  const buttonID = configurationDraftHistoryButtonIDs[scope]?.[wantsUndo ? "undo" : "redo"];
+  const button = buttonID ? document.getElementById(buttonID) : null;
+  if (!button || button.disabled) return;
+  event.preventDefault();
+  button.click();
+});

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/extension"
 	"github.com/ali96adil/StageCore/internal/securityaudit"
@@ -32,8 +33,11 @@ func WithOperatorExtensionPermissionReview(users *userauth.Service, reviewer *ex
 	}
 }
 
-func (h *operatorExtensionPermissionReview) get(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+func (h *operatorExtensionPermissionReview) get(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 	review, err := h.reviewer.Get(r.Context(), strings.TrimSpace(r.PathValue("installation_id")))
+	if !recheckExtensionReadResponse(w, r, h.users, session, userauth.PermissionProjectRead) {
+		return
+	}
 	switch {
 	case errors.Is(err, domain.ErrNotFound):
 		writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "EXTENSION_INSTALLATION_NOT_FOUND"})
@@ -70,12 +74,21 @@ func (h *operatorExtensionPermissionReview) decide(w http.ResponseWriter, r *htt
 		case errors.Is(err, extension.ErrInstalledPayloadIntegrity), errors.Is(err, extension.ErrPermissionReviewIntegrity):
 			status = http.StatusConflict
 			code = "EXTENSION_PERMISSION_REVIEW_INTEGRITY_FAILED"
+		case errors.Is(err, capability.ErrDispatchAuthorityRevoked):
+			status = http.StatusForbidden
+			code = capability.DispatchAuthorityRevokedCode
 		}
 		h.record(r, session, installationID, permission, securityaudit.ResultRejected, code, string(body.Decision))
+		if writeRevokedExtensionMutationResponse(w, r, h.users, session) {
+			return
+		}
 		writeJSON(w, status, map[string]any{"error_code": code})
 		return
 	}
 	h.record(r, session, installationID, permission, securityaudit.ResultSuccess, "", string(body.Decision))
+	if writeRevokedExtensionMutationResponse(w, r, h.users, session) {
+		return
+	}
 	writeJSON(w, http.StatusOK, review)
 }
 
@@ -84,17 +97,17 @@ func (h *operatorExtensionPermissionReview) record(r *http.Request, session user
 		return
 	}
 	_, _ = h.audit.Append(r.Context(), securityaudit.Event{
-		EventType: "extension.permission.review",
-		ActorUserID: session.User.ID,
+		EventType:     "extension.permission.review",
+		ActorUserID:   session.User.ID,
 		ActorUsername: session.User.Username,
-		Source: "operator-web",
-		ResourceType: "extension_installation",
-		ResourceID: strings.TrimSpace(installationID),
-		Result: result,
-		Reason: reason,
+		Source:        "operator-web",
+		ResourceType:  "extension_installation",
+		ResourceID:    strings.TrimSpace(installationID),
+		Result:        result,
+		Reason:        reason,
 		Metadata: map[string]any{
 			"permission": strings.TrimSpace(permission),
-			"decision": strings.ToUpper(strings.TrimSpace(decision)),
+			"decision":   strings.ToUpper(strings.TrimSpace(decision)),
 		},
 	})
 }

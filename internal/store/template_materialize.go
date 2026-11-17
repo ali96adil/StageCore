@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/domain"
 	stageid "github.com/ali96adil/StageCore/internal/id"
@@ -322,6 +323,9 @@ func (s *Store) MaterializeTemplateDraft(ctx context.Context, graph TemplateDraf
 
 	if _, err := tx.ExecContext(ctx, `UPDATE projects SET current_revision_id = ? WHERE project_id = ?`, revisionID, projectID); err != nil {
 		return TemplateDraftResult{}, fmt.Errorf("bind template current revision: %w", err)
+	}
+	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
+		return TemplateDraftResult{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return TemplateDraftResult{}, fmt.Errorf("commit template materialization: %w", err)

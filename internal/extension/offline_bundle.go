@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/software"
 	"github.com/ali96adil/StageCore/internal/store"
@@ -124,6 +125,10 @@ func (i *OfflineBundleImporter) importBundle(ctx context.Context, source io.Read
 		return OfflineBundleImportResult{}, fmt.Errorf("%w: operator import accepts LOCAL or COMMUNITY only", ErrOfflineBundleSource)
 	}
 	if err := validateBundleBinding(metadata, manifest); err != nil {
+		return OfflineBundleImportResult{}, err
+	}
+
+	if err := capability.CheckDispatch(ctx); err != nil {
 		return OfflineBundleImportResult{}, err
 	}
 

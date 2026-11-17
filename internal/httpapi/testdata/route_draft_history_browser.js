@@ -1,0 +1,150 @@
+"use strict";
+
+(async () => {
+  const trace = [];
+  const nativeFetch = window.fetch.bind(window);
+  window.fetch = async (...args) => {
+    const response = await nativeFetch(...args);
+    const method = String(args[1]?.method || "GET").toUpperCase();
+    const url = String(args[0]);
+    if (url.startsWith("/api/v1/")) trace.push({method, url, status: response.status});
+    return response;
+  };
+  const waitFor = async (predicate, label) => {
+    const deadline = Date.now() + 10000;
+    while (Date.now() < deadline) {
+      if (predicate()) return;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    throw new Error(`Timed out waiting for ${label}`);
+  };
+  const report = async (payload) => {
+    await nativeFetch("/route-draft-history-result", {
+      method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(payload),
+    });
+    window.close();
+  };
+
+  try {
+    if (document.readyState === "loading") {
+      await new Promise((resolve) => document.addEventListener("DOMContentLoaded", resolve, {once: true}));
+    }
+    const response = await nativeFetch("/route-draft-history-config", {cache: "no-store"});
+    if (!response.ok) throw new Error(`browser config returned HTTP ${response.status}`);
+    const config = await response.json();
+    state.user = {username: "owner", role: "OWNER"};
+    state.csrf = config.csrf;
+    state.project = {project_id: config.project, name: config.project_name};
+    sessionStorage.setItem("stagecore_csrf", state.csrf);
+    document.documentElement.lang = "ar";
+    document.documentElement.dir = "rtl";
+    showApp();
+    await navigate("configuration");
+
+    await waitFor(() => document.getElementById("routeHistoryUndo") || document.querySelector("#globalMessage:not(.hidden)"),
+      "Route history controls or a visible page error");
+    if (!document.getElementById("routeHistoryUndo")) {
+      throw new Error(`Route configuration did not render controls: page=${state.page}; project=${JSON.stringify(state.project)}; message=${document.getElementById("globalMessage")?.textContent}; content=${document.getElementById("content")?.innerHTML.slice(0, 1600)}`);
+    }
+    const undo = document.getElementById("routeHistoryUndo");
+    if (undo.disabled) throw new Error("Route Undo is disabled despite a persisted Draft change");
+    if (undo.getAttribute("aria-keyshortcuts") !== "Control+Z Meta+Z") throw new Error("Route Undo does not expose its keyboard shortcut");
+    if (document.documentElement.scrollWidth > window.innerWidth) throw new Error("Route workspace overflows the mobile RTL viewport");
+    const initialUndoEnabled = !undo.disabled;
+    const routeNameInput = document.getElementById("routeName");
+    routeNameInput.focus();
+    const textShortcutReady = await nativeFetch("/route-draft-history-text-key-ready", {method: "POST"});
+    if (!textShortcutReady.ok) throw new Error(`text-field keyboard gate returned HTTP ${textShortcutReady.status}`);
+    await waitFor(() => !!document.querySelector(`.route-remove[data-route-id="${config.route}"]`) &&
+      !document.getElementById("routeHistoryUndo")?.disabled, "text field preserving persistent Route history");
+    undo.focus();
+    if (document.activeElement !== undo) throw new Error("Route Undo did not receive keyboard focus");
+    if (!undo.matches(":focus-visible")) throw new Error("Route Undo keyboard focus ring is not visible");
+    const keyboardReady = await nativeFetch("/route-draft-history-key-ready", {method: "POST"});
+    if (!keyboardReady.ok) throw new Error(`native keyboard gate returned HTTP ${keyboardReady.status}`);
+    await waitFor(() => !document.querySelector(`.route-remove[data-route-id="${config.route}"]`),
+      "Route removal after keyboard Undo");
+    await waitFor(() => document.getElementById("routeHistoryRedo") && !document.getElementById("routeHistoryRedo").disabled,
+      "Redo becoming available after Undo");
+
+    const redo = document.getElementById("routeHistoryRedo");
+    redo.focus();
+    const keyboardRedoReady = await nativeFetch("/route-draft-history-redo-key-ready", {method: "POST"});
+    if (!keyboardRedoReady.ok) throw new Error(`native keyboard Redo gate returned HTTP ${keyboardRedoReady.status}`);
+    await waitFor(() => !!document.querySelector(`.route-remove[data-route-id="${config.route}"]`),
+      "Route restoration after keyboard Redo");
+    await waitFor(() => {
+      const button = document.getElementById("routeHistoryUndo");
+      return button && !button.disabled;
+    }, "Undo becoming available after keyboard Redo");
+    const nextUndo = document.getElementById("routeHistoryUndo");
+    nextUndo.focus();
+    const secondKeyboardUndoReady = await nativeFetch("/route-draft-history-key-ready", {method: "POST"});
+    if (!secondKeyboardUndoReady.ok) throw new Error(`second native keyboard Undo gate returned HTTP ${secondKeyboardUndoReady.status}`);
+    await waitFor(() => !document.querySelector(`.route-remove[data-route-id="${config.route}"]`),
+      "Route removal after second keyboard Undo");
+    await waitFor(() => document.getElementById("routeHistoryRedo") && !document.getElementById("routeHistoryRedo").disabled,
+      "Redo becoming available before touch Redo");
+
+    const touchRedo = document.getElementById("routeHistoryRedo");
+    touchRedo.scrollIntoView({block: "center"});
+    const rect = touchRedo.getBoundingClientRect();
+    const touchReady = await nativeFetch("/route-draft-history-touch-ready", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({x: rect.left + rect.width / 2, y: rect.top + rect.height / 2}),
+    });
+    if (!touchReady.ok) throw new Error(`native touch gate returned HTTP ${touchReady.status}`);
+    await waitFor(() => !!document.querySelector(`.route-remove[data-route-id="${config.route}"]`),
+      "Route restoration after touch Redo");
+    await waitFor(() => !document.getElementById("routeHistoryUndo")?.disabled,
+      "Undo becoming available after Redo");
+
+    const exerciseHistoryShortcut = async ({scope, id, rowSelector, undoID, redoID}) => {
+      const undoButton = document.getElementById(undoID);
+      if (!undoButton || undoButton.disabled) throw new Error(`${scope} Undo is unavailable for a recorded Draft change`);
+      if (undoButton.getAttribute("aria-keyshortcuts") !== "Control+Z Meta+Z") {
+        throw new Error(`${scope} Undo does not expose its keyboard shortcut`);
+      }
+      undoButton.focus();
+      if (document.activeElement !== undoButton) throw new Error(`${scope} Undo did not receive focus`);
+      const undoResponse = await nativeFetch(`/${scope}-draft-history-key-ready`, {method: "POST"});
+      if (!undoResponse.ok) throw new Error(`${scope} keyboard Undo gate returned HTTP ${undoResponse.status}`);
+      await waitFor(() => !document.querySelector(rowSelector(id)), `${scope} removal after keyboard Undo`);
+
+      const redoButton = document.getElementById(redoID);
+      if (!redoButton || redoButton.disabled) throw new Error(`${scope} Redo did not become available after Undo`);
+      if (redoButton.getAttribute("aria-keyshortcuts") !== "Control+Shift+Z Control+Y Meta+Shift+Z Meta+Y") {
+        throw new Error(`${scope} Redo does not expose its keyboard shortcuts`);
+      }
+      redoButton.focus();
+      if (document.activeElement !== redoButton) throw new Error(`${scope} Redo did not receive focus`);
+      const redoResponse = await nativeFetch(`/${scope}-draft-history-redo-key-ready`, {method: "POST"});
+      if (!redoResponse.ok) throw new Error(`${scope} keyboard Redo gate returned HTTP ${redoResponse.status}`);
+      await waitFor(() => !!document.querySelector(rowSelector(id)), `${scope} restoration after keyboard Redo`);
+      await waitFor(() => !document.getElementById(undoID)?.disabled, `${scope} Undo after keyboard Redo`);
+      return true;
+    };
+
+    const inputKeyboardUndo = await exerciseHistoryShortcut({
+      scope: "input", id: config.input, undoID: "inputHistoryUndo", redoID: "inputHistoryRedo",
+      rowSelector: (id) => `.input-remove[data-input-id="${id}"]`,
+    });
+    const outputKeyboardUndo = await exerciseHistoryShortcut({
+      scope: "output", id: config.output, undoID: "outputHistoryUndo", redoID: "outputHistoryRedo",
+      rowSelector: (id) => `.output-remove[data-output-id="${id}"]`,
+    });
+
+    const routeHistoryRequests = trace.filter(({url}) => url.includes("/route-draft-history")).map(({method, status}) => `${method}:${status}`);
+    const unexpectedMutations = trace.filter(({method, url}) => method !== "GET" && !url.includes("-draft-history"));
+    const overflow = document.documentElement.scrollWidth > window.innerWidth;
+    await report({
+      status: "PASS", undo_enabled: initialUndoEnabled, keyboard_undo: true, keyboard_redo: true, touch_redo: true,
+      restored_same_route: !!document.querySelector(`.route-remove[data-route-id="${config.route}"]`),
+      input_keyboard_undo: inputKeyboardUndo, input_keyboard_redo: inputKeyboardUndo,
+      output_keyboard_undo: outputKeyboardUndo, output_keyboard_redo: outputKeyboardUndo,
+      overflow, route_history_requests: routeHistoryRequests, unexpected_mutations: unexpectedMutations,
+    });
+  } catch (error) {
+    await report({status: "FAIL", error: String(error?.stack || error), trace});
+  }
+})();

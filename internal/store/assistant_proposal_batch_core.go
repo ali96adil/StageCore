@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/domain"
 	stageid "github.com/ali96adil/StageCore/internal/id"
 )
@@ -182,6 +183,9 @@ func (s *Store) ApplyAssistantProposalBatch(ctx context.Context, projectID, revi
 		results[i] = assistantProposalResult(mutation)
 	}
 
+	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("commit assistant proposal batch: %w", err)
 	}

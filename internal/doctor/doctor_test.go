@@ -96,6 +96,81 @@ func TestHealthyDoctorReportUsesReadOnlyLocalSources(t *testing.T) {
 	}
 }
 
+func TestIsolatedDoctorValidatesSandboxAndTargetsOnlySelectedService(t *testing.T) {
+	root := t.TempDir()
+	serviceName := "stagecore-rc-qualification.service"
+	opts := Options{
+		InstallRoot: filepath.Join(root, "opt", "stagecore-rc-qualification"),
+		ConfigRoot:  filepath.Join(root, "etc", "stagecore-rc-qualification"),
+		SystemdUnit: filepath.Join(root, "systemd", serviceName),
+		ServiceName: serviceName,
+	}
+	cfg := &deploymentConfig{
+		DataRoot:  filepath.Join(root, "var", "data"),
+		VaultRoot: filepath.Join(root, "var", "vault"),
+	}
+	deploymentOpts := deployment.Options{
+		BundleDir: filepath.Join(root, "bundle"), InstallRoot: opts.InstallRoot,
+		ConfigRoot: opts.ConfigRoot, DataRoot: cfg.DataRoot, VaultRoot: cfg.VaultRoot,
+		ServiceName: serviceName, SystemdUnit: opts.SystemdUnit,
+		ServiceUser: deployment.DefaultServiceUser, ServiceGroup: deployment.DefaultServiceGroup,
+		Listen: "127.0.0.1:17840", OperatorTLSListen: "127.0.0.1:17842", DeviceListen: "127.0.0.1:17841",
+	}
+	if err := os.MkdirAll(filepath.Dir(opts.SystemdUnit), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	unit := deployment.RenderSystemdUnit(deploymentOpts)
+	if err := os.WriteFile(opts.SystemdUnit, []byte(unit), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ok, check := checkSystemdUnit(opts, cfg, nil)
+	if !ok || check.Status != Ready {
+		t.Fatalf("valid isolated systemd unit rejected: %+v", check)
+	}
+
+	withoutPrivateNetwork := strings.Replace(unit, "PrivateNetwork=yes\n", "", 1)
+	if err := os.WriteFile(opts.SystemdUnit, []byte(withoutPrivateNetwork), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if ok, check := checkSystemdUnit(opts, cfg, nil); ok || check.Status != Blocker || check.MessageKey != "unit.isolation" {
+		t.Fatalf("isolated unit without a private network namespace was accepted: ok=%v check=%+v", ok, check)
+	}
+
+	withHiddenRuntime := strings.Replace(unit, "InaccessiblePaths=-/var/lib/stagecore", "InaccessiblePaths=/run -/var/lib/stagecore", 1)
+	if err := os.WriteFile(opts.SystemdUnit, []byte(withHiddenRuntime), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if ok, check := checkSystemdUnit(opts, cfg, nil); ok || check.Status != Blocker || check.MessageKey != "unit.isolation" {
+		t.Fatalf("isolated unit hiding systemd's mount runtime was accepted: ok=%v check=%+v", ok, check)
+	}
+
+	var calls [][]string
+	runner := NewRunner()
+	runner.Command = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		calls = append(calls, append([]string(nil), args...))
+		if args[0] == "is-enabled" {
+			return []byte("static\n"), nil
+		}
+		return []byte("active\n"), nil
+	}
+	enabled := runner.checkSystemdEnabled(context.Background(), serviceName, true)
+	active := runner.checkSystemdActive(context.Background(), serviceName)
+	if enabled.Status != Ready || enabled.MessageKey != "service.static" || active.Status != Ready {
+		t.Fatalf("isolated service status checks failed: enabled=%+v active=%+v", enabled, active)
+	}
+	if len(calls) != 2 || calls[0][1] != serviceName || calls[1][1] != serviceName {
+		t.Fatalf("Doctor targeted unexpected systemd units: %v", calls)
+	}
+
+	unsafe := strings.Replace(unit, "Wants=network.target", "Wants=network.target\nPartOf=stagecore-hub.service", 1)
+	if err := os.WriteFile(opts.SystemdUnit, []byte(unsafe), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if ok, check := checkSystemdUnit(opts, cfg, nil); ok || check.Status != Blocker || check.MessageKey != "unit.isolation" {
+		t.Fatalf("isolated unit linking to production was accepted: ok=%v check=%+v", ok, check)
+	}
+}
+
 // V2 stage devices authenticate through companions but their operational
 // connection/readiness is tracked in Stage Devices, not companions.readiness.
 func TestInspectPairingSeparatesStageDeviceV2FromLegacyCompanionReadiness(t *testing.T) {

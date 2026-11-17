@@ -8,6 +8,7 @@ import (
 )
 
 func TestOfflineMediaRejectsChecksumPathTraversal(t *testing.T) {
+	requireLinuxOfflineMedia(t)
 	media := createTestOfflineMedia(t)
 	malicious := strings.Repeat("0", 64) + "  ../outside\n"
 	if err := os.WriteFile(filepath.Join(media, "MEDIA_SHA256SUMS"), []byte(malicious), 0o644); err != nil {

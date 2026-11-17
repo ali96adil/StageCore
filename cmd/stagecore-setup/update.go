@@ -28,9 +28,12 @@ func runUpdate(args []string) {
 	vaultRoot := fs.String("vault-root", defaults.Deployment.VaultRoot, "StageCore Vault root")
 	serviceUser := fs.String("service-user", defaults.Deployment.ServiceUser, "system service user")
 	serviceGroup := fs.String("service-group", defaults.Deployment.ServiceGroup, "system service group")
+	serviceName := fs.String("service-name", "", "explicit systemd service name (must match --systemd-unit)")
 	listen := fs.String("listen", defaults.Deployment.Listen, "StageCore Hub HTTP listen address")
+	operatorTLSListen := fs.String("operator-tls-listen", "", "Operator TLS listen address (defaults are environment-specific)")
+	deviceListen := fs.String("device-listen", "", "device API listen address (defaults are environment-specific)")
 	unitPath := fs.String("systemd-unit", defaults.Deployment.SystemdUnit, "systemd unit installation path")
-	backupRoot := fs.String("backup-root", defaults.BackupRoot, "root for verified automatic rollback snapshots")
+	backupRoot := fs.String("backup-root", "", "root for verified automatic rollback snapshots (required for an isolated service)")
 	dryRun := fs.Bool("dry-run", false, "validate candidate, Doctor state and SHOW gate without changing the host")
 	readinessTimeout := fs.Duration("readiness-timeout", defaults.Deployment.ReadinessTimeout, "maximum time to wait for candidate /health/ready")
 	if err := fs.Parse(args); err != nil {
@@ -40,10 +43,15 @@ func runUpdate(args []string) {
 		fmt.Fprintf(os.Stderr, "stagecore-setup update: unexpected arguments: %s\n", strings.Join(fs.Args(), " "))
 		os.Exit(2)
 	}
-	listenExplicit := false
+	listenExplicit, operatorTLSListenExplicit, deviceListenExplicit := false, false, false
 	fs.Visit(func(option *flag.Flag) {
-		if option.Name == "listen" {
+		switch option.Name {
+		case "listen":
 			listenExplicit = true
+		case "operator-tls-listen":
+			operatorTLSListenExplicit = true
+		case "device-listen":
+			deviceListenExplicit = true
 		}
 	})
 	if *readinessTimeout < time.Second {
@@ -52,17 +60,22 @@ func runUpdate(args []string) {
 
 	result, err := stageupdate.NewService().Apply(context.Background(), stageupdate.Options{
 		Deployment: deployment.Options{
-			BundleDir:        strings.TrimSpace(*bundle),
-			InstallRoot:      strings.TrimSpace(*installRoot),
-			ConfigRoot:       strings.TrimSpace(*configRoot),
-			DataRoot:         strings.TrimSpace(*dataRoot),
-			VaultRoot:        strings.TrimSpace(*vaultRoot),
-			ServiceUser:      strings.TrimSpace(*serviceUser),
-			ServiceGroup:     strings.TrimSpace(*serviceGroup),
-			Listen:           strings.TrimSpace(*listen),
-			ListenExplicit:   listenExplicit,
-			SystemdUnit:      strings.TrimSpace(*unitPath),
-			ReadinessTimeout: *readinessTimeout,
+			BundleDir:                 strings.TrimSpace(*bundle),
+			InstallRoot:               strings.TrimSpace(*installRoot),
+			ConfigRoot:                strings.TrimSpace(*configRoot),
+			DataRoot:                  strings.TrimSpace(*dataRoot),
+			VaultRoot:                 strings.TrimSpace(*vaultRoot),
+			ServiceUser:               strings.TrimSpace(*serviceUser),
+			ServiceGroup:              strings.TrimSpace(*serviceGroup),
+			ServiceName:               strings.TrimSpace(*serviceName),
+			Listen:                    strings.TrimSpace(*listen),
+			ListenExplicit:            listenExplicit,
+			OperatorTLSListen:         strings.TrimSpace(*operatorTLSListen),
+			OperatorTLSListenExplicit: operatorTLSListenExplicit,
+			DeviceListen:              strings.TrimSpace(*deviceListen),
+			DeviceListenExplicit:      deviceListenExplicit,
+			SystemdUnit:               strings.TrimSpace(*unitPath),
+			ReadinessTimeout:          *readinessTimeout,
 		},
 		BackupRoot: strings.TrimSpace(*backupRoot),
 		DryRun:     *dryRun,

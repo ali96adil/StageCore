@@ -1,0 +1,178 @@
+"use strict";
+
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const vm = require("node:vm");
+const test = require("node:test");
+
+const source = fs.readFileSync("internal/operatorweb/static/memory.js", "utf8");
+const helpers = source.slice(source.indexOf("const sessionEventLabels ="), source.indexOf("async function renderRehearsalApproval("));
+
+function harness() {
+  const context = {
+    esc: (value) => String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;"),
+    fmtDate: String,
+    pill: (label) => `<pill>${label}</pill>`,
+  };
+  vm.runInNewContext(helpers, context);
+  return context;
+}
+
+test("Session timeline filters by event category and renders only projected fields", () => {
+  const h = harness();
+  const events = [
+    {event_id: "safety-1", event_type: "runtime.emergency_blackout.applied", category: "safety", priority: "P0", occurred_at: "now", correlation_id: "corr-safe"},
+    {event_id: "device-1", event_type: "stage_device.command.failed", category: "device", priority: "P1", occurred_at: "later", warning_count: 1, warning_kinds: ["preflight"]},
+  ];
+  const safety = h.sessionEventTimelineMarkup(events, "safety");
+  assert.match(safety, /Emergency Blackout applied/);
+  assert.doesNotMatch(safety, /Device command failed/);
+  assert.match(h.sessionEventTimelineMarkup(events, "device"), /Preflight warning/);
+  assert.match(h.sessionEventTimelineMarkup([], "all"), /No runtime events match/);
+});
+
+test("Session timeline labels explicit Hub transport evidence without claiming output", () => {
+  const h = harness();
+  const event = {
+    event_id: "transport-1",
+    event_type: "stage_device.transport.connected",
+    category: "device_health",
+    occurred_at: "now",
+    device_id: "tablet-01",
+    transport_state: "CONNECTED",
+    connection_generation: 9,
+    response_summary: "untrusted output response",
+  };
+  const markup = h.sessionEventTimelineMarkup([event], "device_health");
+  assert.match(markup, /Hub transport connected/);
+  assert.match(markup, /Device tablet-01/);
+  assert.match(markup, /Hub transport CONNECTED/);
+  assert.match(markup, /Connection 9/);
+  assert.match(markup, /does not confirm device output/);
+  assert.doesNotMatch(markup, /untrusted output response/);
+  assert.doesNotMatch(h.sessionEventTimelineMarkup([event], "device"), /Hub transport connected/);
+
+  const projection = h.sessionTraceExportProjection(
+    {session_id: "s1", project_id: "p1"}, [], [event],
+  );
+  const encoded = JSON.stringify(projection);
+  assert.match(encoded, /device_health/);
+  assert.match(encoded, /tablet-01/);
+  assert.doesNotMatch(encoded, /untrusted output response/);
+});
+
+test("Session timeline scopes Companion Hub sockets without claiming app or output health", () => {
+  const h = harness();
+  const event = {
+    event_id: "companion-transport-1",
+    event_type: "companion.transport.disconnected",
+    category: "companion_health",
+    occurred_at: "now",
+    companion_id: "mac-video",
+    transport_state: "DISCONNECTED",
+    connection_generation: 12,
+    transition_reason: "SESSION_REVOKED",
+    response_summary: "private adapter response",
+  };
+  const markup = h.sessionEventTimelineMarkup([event], "companion_health");
+  assert.match(markup, /Companion Hub transport disconnected/);
+  assert.match(markup, /Companion mac-video/);
+  assert.match(markup, /Hub transport DISCONNECTED/);
+  assert.match(markup, /Reason SESSION_REVOKED/);
+  assert.match(markup, /does not confirm Companion app readiness, adapter health, or physical output/);
+  assert.doesNotMatch(markup, /private adapter response/);
+  assert.doesNotMatch(h.sessionEventTimelineMarkup([event], "device_health"), /Companion Hub transport/);
+
+  const projection = h.sessionTraceExportProjection({session_id: "s1", project_id: "p1"}, [], [event]);
+  const encoded = JSON.stringify(projection);
+  assert.match(encoded, /companion_health/);
+  assert.match(encoded, /mac-video/);
+  assert.doesNotMatch(encoded, /private adapter response/);
+
+  const metrics = h.sessionComparisonMetrics({session_id: "s1"}, [], [event]);
+  assert.equal(metrics.companion_health_events, 1);
+  assert.match(h.sessionComparisonMarkup({session_id: "s1"}, [], [event], {session_id: "s2"}, [], []), /Companion transport events/);
+});
+
+test("Session JSON export keeps execution evidence but excludes free-form adapter response text", () => {
+  const h = harness();
+  const projection = h.sessionTraceExportProjection(
+    {session_id: "s1", project_id: "p1", session_type: "REHEARSAL", name: "Dress", runtime_snapshot_id: "snap", status: "COMPLETED"},
+    [{cue_execution_id: "c1", cue_id: "cue1", name: "Opening", result: "COMPLETED", actions: [{action_execution_id: "a1", action_id: "a", target_ref: "video", capability_key: "osc.send", result: "COMPLETED", ack_level: "TRANSPORT_ONLY", delivery_evidence: "EXTERNAL_EXECUTION_UNKNOWN", response_summary: "untrusted private endpoint response"}]}],
+    [{event_id: "e1", event_type: "runtime.emergency_blackout.applied", category: "safety"}],
+  );
+  const encoded = JSON.stringify(projection);
+  assert.match(encoded, /EXTERNAL_EXECUTION_UNKNOWN/);
+  assert.match(encoded, /runtime\.emergency_blackout\.applied/);
+  assert.doesNotMatch(encoded, /untrusted private endpoint response/);
+});
+
+test("Session comparison computes bounded metrics from recorded traces and reports differences", () => {
+  const h = harness();
+  const current = {session_id: "s1", name: "Current", runtime_snapshot_id: "snap-a", started_at: "2026-01-01T00:00:00Z", ended_at: "2026-01-01T00:00:10Z"};
+  const compared = {session_id: "s2", name: "Previous", runtime_snapshot_id: "snap-b", started_at: "2026-01-01T00:00:00Z", ended_at: "2026-01-01T00:00:08Z"};
+  const currentCues = [{result: "COMPLETED", actions: [{result: "COMPLETED"}, {result: "FAILED"}]}];
+  const previousCues = [{result: "FAILED", interrupted: true, actions: [{result: "FAILED"}]}];
+  const currentEvents = [{category: "safety"}, {category: "device"}];
+  const previousEvents = [{category: "device"}];
+  const metrics = h.sessionComparisonMetrics(current, currentCues, currentEvents);
+  assert.equal(metrics.duration_ms, 10000);
+  assert.equal(metrics.action_count, 2);
+  assert.equal(metrics.failed_actions, 1);
+  assert.equal(metrics.safety_events, 1);
+  assert.equal(metrics.device_health_events, 0);
+  const markup = h.sessionComparisonMarkup(current, currentCues, currentEvents, compared, previousCues, previousEvents);
+  assert.match(markup, /Current · Previous/);
+  assert.match(markup, /Snapshot differs/);
+  assert.match(markup, /\+2\.0 s/);
+  assert.match(markup, /Interrupted Cues/);
+});
+
+test("Session comparison aligns repeated Cue runs by occurrence and Action ID", () => {
+  const h = harness();
+  const current = {session_id: "current", name: "Current", runtime_snapshot_id: "snap-a"};
+  const compared = {session_id: "previous", name: "Previous", runtime_snapshot_id: "snap-a"};
+  const currentCues = [
+    {cue_id: "cue-open", display_label: "1", name: "Opening", actions: [
+      {action_id: "action-midi", capability_key: "midi.send", target_ref: "SIM MIDI", result: "COMPLETED", latency_ms: 21, ack_level: "TRANSPORT_ONLY", delivery_evidence: "EXTERNAL_EXECUTION_UNKNOWN", response_summary: "private response text"},
+      {action_id: "action-light", capability_key: "lighting.channels.fade", target_ref: "SIM DMX", result: "FAILED", error_code: "OUTPUT_TIMEOUT", latency_ms: null},
+    ]},
+    {cue_id: "cue-open", display_label: "1", name: "Opening", actions: [
+      {action_id: "action-midi", capability_key: "midi.send", target_ref: "SIM MIDI", result: "COMPLETED", latency_ms: 16, ack_level: "APPLICATION", delivery_evidence: "APPLICATION_ACKNOWLEDGED"},
+    ]},
+  ];
+  const comparedCues = [
+    {cue_id: "cue-open", display_label: "1", name: "Opening", actions: [
+      {action_id: "action-midi", capability_key: "midi.send", target_ref: "SIM MIDI", result: "FAILED", latency_ms: 32, ack_level: "NONE", delivery_evidence: "UNKNOWN"},
+      {action_id: "action-visual", capability_key: "visual.scene.activate", target_ref: "SIM VDMX", result: "COMPLETED", latency_ms: 9},
+    ]},
+    {cue_id: "cue-open", display_label: "1", name: "Opening", actions: [
+      {action_id: "action-midi", capability_key: "midi.send", target_ref: "SIM MIDI", result: "COMPLETED", latency_ms: 18, ack_level: "VERIFIED_STATE", delivery_evidence: "STATE_VERIFIED"},
+    ]},
+  ];
+
+  const markup = h.sessionComparisonMarkup(current, currentCues, [], compared, comparedCues, []);
+  assert.match(markup, /Action-by-action comparison/);
+  assert.match(markup, /Opening/);
+  assert.match(markup, /TRANSPORT_ONLY/);
+  assert.match(markup, /VERIFIED_STATE/);
+  assert.match(markup, /Transport sent; external execution unknown/);
+  assert.match(markup, /Output state verified/);
+  assert.match(markup, /21 ms/);
+  assert.match(markup, /32 ms/);
+  assert.match(markup, /OUTPUT_TIMEOUT/);
+  assert.match(markup, /SIM VDMX/);
+  assert.doesNotMatch(markup, /private response text/);
+  assert.match(markup, /Actions match by Cue ID, occurrence order, and Action ID/);
+});
+
+test("Session comparison does not pair actions without stable IDs across sessions", () => {
+  const h = harness();
+  const currentRows = h.sessionComparisonActions([
+    {cue_id: "cue", actions: [{capability_key: "osc.send", target_ref: "A", result: "COMPLETED"}]},
+  ], "current");
+  const comparedRows = h.sessionComparisonActions([
+    {cue_id: "cue", actions: [{capability_key: "osc.send", target_ref: "A", result: "FAILED"}]},
+  ], "compared");
+  assert.equal([...currentRows.keys()].some((key) => comparedRows.has(key)), false);
+});

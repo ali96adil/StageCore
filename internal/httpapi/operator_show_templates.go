@@ -61,8 +61,18 @@ func WithOperatorShowTemplates(auth *userauth.Service, service ShowTemplateServi
 			if !validTemplateMaterializeBody(body.ProjectName, body.ProjectDescription, body.Locale, body.Values) {
 				writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "SHOW_TEMPLATE_VALUES_INVALID"}); return
 			}
-			result, err := service.Materialize(r.Context(), strings.TrimSpace(r.PathValue("template_id")), showtemplate.MaterializeRequest{ProjectName: body.ProjectName, ProjectDescription: body.ProjectDescription, Locale: body.Locale, Values: body.Values, CreatedBy: session.User.ID})
-			if err != nil { writeShowTemplateError(w, err); return }
+			ctx := projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil)
+			result, err := service.Materialize(ctx, strings.TrimSpace(r.PathValue("template_id")), showtemplate.MaterializeRequest{ProjectName: body.ProjectName, ProjectDescription: body.ProjectDescription, Locale: body.Locale, Values: body.Values, CreatedBy: session.User.ID})
+			if err != nil {
+				if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil) {
+					return
+				}
+				writeShowTemplateError(w, err)
+				return
+			}
+			if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil) {
+				return
+			}
 			writeJSON(w, http.StatusCreated, map[string]any{"result": result})
 		}))
 		s.mux.HandleFunc("POST /api/v1/show-templates/import/validate", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
@@ -81,13 +91,43 @@ func WithOperatorShowTemplates(auth *userauth.Service, service ShowTemplateServi
 			if len(body.Template) == 0 || len(body.Template) > 2<<20 || !validTemplateMaterializeBody(body.ProjectName, body.ProjectDescription, body.Locale, body.Values) {
 				writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "SHOW_TEMPLATE_DOCUMENT_INVALID"}); return
 			}
-			result, compatibility, err := service.MaterializeDocument(r.Context(), body.Template, showtemplate.MaterializeRequest{ProjectName: body.ProjectName, ProjectDescription: body.ProjectDescription, Locale: body.Locale, Values: body.Values, CreatedBy: session.User.ID})
-			if err != nil { writeShowTemplateError(w, err); return }
+			ctx := projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil)
+			result, compatibility, err := service.MaterializeDocument(ctx, body.Template, showtemplate.MaterializeRequest{ProjectName: body.ProjectName, ProjectDescription: body.ProjectDescription, Locale: body.Locale, Values: body.Values, CreatedBy: session.User.ID})
+			if err != nil {
+				if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil) {
+					return
+				}
+				writeShowTemplateError(w, err)
+				return
+			}
+			if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil) {
+				return
+			}
 			writeJSON(w, http.StatusCreated, map[string]any{"result": result, "compatibility": compatibility})
 		}))
-		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/template-export", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/template-export", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 			value, err := service.ExportProject(r.Context(), strings.TrimSpace(r.PathValue("project_id")))
-			if err != nil { writeShowTemplateError(w, err); return }
+			if err != nil {
+				if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+					return
+				}
+				writeShowTemplateError(w, err)
+				return
+			}
+			w.Header().Set("Cache-Control", "no-store")
+			token, _ := browserSessionToken(r)
+			current, err := auth.ValidatePassive(r.Context(), token)
+			if err != nil || current.ID != session.ID || current.User.ID != session.User.ID {
+				writeJSON(w, http.StatusUnauthorized, map[string]string{"error_code": "SESSION_INVALID"})
+				return
+			}
+			if userauth.Authorize(current.User.Role, userauth.PermissionProjectRead) != nil {
+				writeJSON(w, http.StatusForbidden, map[string]string{"error_code": "FORBIDDEN"})
+				return
+			}
+			if _, err := currentProjectRouteGrant(r); !writeProjectQualificationError(w, err) {
+				return
+			}
 			writeJSON(w, http.StatusOK, map[string]any{"template": value, "compatibility": showtemplate.CompatibilityFor(value)})
 		}))
 	}
@@ -101,6 +141,9 @@ func validTemplateMaterializeBody(name, description, locale string, values map[s
 }
 
 func writeShowTemplateError(w http.ResponseWriter, err error) {
+	if writeProjectMutationDenied(w, err) {
+		return
+	}
 	switch {
 	case errors.Is(err, showtemplate.ErrTemplateNotFound):
 		writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "SHOW_TEMPLATE_NOT_FOUND"})

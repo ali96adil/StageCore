@@ -28,23 +28,39 @@ func localOnly(address string) bool {
 
 func main() {
  var source,listen,flashControl string
+ var viewerTokenFile,controlTokenFile,tlsCert,tlsKey string
  var allowLAN bool
  flag.StringVar(&source,"source","","camera MJPEG HTTP URL (required)")
  flag.StringVar(&listen,"listen","127.0.0.1:9081","relay HTTP listen address (local-only default)")
  flag.StringVar(&flashControl,"flash-control","","optional camera flash control HTTP URL")
  flag.BoolVar(&allowLAN,"allow-lan",false,"explicitly permit unauthenticated LAN HTTP; use show-network isolation")
+ flag.StringVar(&viewerTokenFile,"viewer-token-file","","owner-only file with the camera viewer bearer token")
+ flag.StringVar(&controlTokenFile,"control-token-file","","owner-only file with the camera control bearer token")
+ flag.StringVar(&tlsCert,"tls-cert","","TLS certificate path")
+ flag.StringVar(&tlsKey,"tls-key","","TLS private key path")
  flag.Parse()
- if source=="" || (!localOnly(listen)&&!allowLAN) {
+ qualified:=viewerTokenFile!="" || controlTokenFile!=""
+ if (tlsCert=="")!=(tlsKey=="") || (qualified && (viewerTokenFile=="" || controlTokenFile=="" || (!localOnly(listen) && tlsCert==""))){
+  fmt.Fprintln(os.Stderr,"camera authorization requires both token files and TLS on non-loopback listeners; TLS requires both certificate and key")
+  os.Exit(2)
+ }
+ if source=="" || (!localOnly(listen)&&!allowLAN&&!qualified) {
   fmt.Fprintln(os.Stderr,"required: -source; non-loopback -listen requires -allow-lan")
   os.Exit(2)
  }
  logger:=slog.New(slog.NewJSONHandler(os.Stdout,nil))
- relay,err:=camerarelay.New(camerarelay.Config{SourceURL:source,FlashControlURL:flashControl},logger)
+ cfg:=camerarelay.Config{SourceURL:source,FlashControlURL:flashControl}
+ if qualified {
+  authorize,err:=camerarelay.FileAccess(viewerTokenFile,controlTokenFile)
+  if err!=nil {logger.Error("invalid relay authorization","error",err);os.Exit(2)}
+  cfg.Authorize=authorize
+ }
+ relay,err:=camerarelay.New(cfg,logger)
  if err!=nil {logger.Error("invalid relay configuration","error",err);os.Exit(2)}
  listener,err:=net.Listen("tcp",listen)
  if err!=nil{logger.Error("cannot listen","error",err);os.Exit(1)}
  defer listener.Close()
- if !localOnly(listen){logger.Warn("LAN relay HTTP is unauthenticated; restrict network and firewall access")}
+ if !localOnly(listen)&&!qualified{logger.Warn("LAN relay HTTP is unauthenticated; restrict network and firewall access")}
  server:=&http.Server{
   Handler:relay.Handler(),ReadHeaderTimeout:5*time.Second,IdleTimeout:10*time.Second,
   // Each streaming handler imposes per-frame write deadlines.
@@ -53,7 +69,10 @@ func main() {
  defer stop()
  errs:=make(chan error,2)
  go func(){errs<-relay.Run(ctx)}()
- go func(){errs<-server.Serve(listener)}()
+ go func(){
+  if tlsCert!=""{errs<-server.ServeTLS(listener,tlsCert,tlsKey);return}
+  errs<-server.Serve(listener)
+ }()
  logger.Info("camera relay started","listen",listener.Addr().String())
  select {
  case err:=<-errs:

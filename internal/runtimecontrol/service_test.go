@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/contracts"
+	"github.com/ali96adil/StageCore/internal/cueengine"
 	"github.com/ali96adil/StageCore/internal/db"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/simulator"
@@ -18,6 +20,7 @@ import (
 )
 
 type runtimeHarness struct {
+	database *db.Handle
 	store    *store.Store
 	service  *Service
 	project  domain.Project
@@ -25,11 +28,11 @@ type runtimeHarness struct {
 	cues     []domain.Cue
 }
 
-func newRuntimeHarness(t *testing.T, cueParameters ...json.RawMessage) *runtimeHarness {
+func newRuntimeHarness(t testing.TB, cueParameters ...json.RawMessage) *runtimeHarness {
 	return newRuntimeHarnessWithPolicies(t, nil, cueParameters...)
 }
 
-func newRuntimeHarnessWithPolicies(t *testing.T, policies []json.RawMessage, cueParameters ...json.RawMessage) *runtimeHarness {
+func newRuntimeHarnessWithPolicies(t testing.TB, policies []json.RawMessage, cueParameters ...json.RawMessage) *runtimeHarness {
 	t.Helper()
 	ctx := context.Background()
 	h, err := db.Open(ctx, db.Config{DataRoot: t.TempDir()})
@@ -78,7 +81,7 @@ func newRuntimeHarnessWithPolicies(t *testing.T, policies []json.RawMessage, cue
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &runtimeHarness{store: s, service: New(s, registry), project: project, snapshot: published, cues: cues}
+	return &runtimeHarness{database: h, store: s, service: New(s, registry), project: project, snapshot: published, cues: cues}
 }
 
 func TestStopCueCancelsPendingStartDelayWithoutWaitingForTimer(t *testing.T) {
@@ -91,7 +94,9 @@ func TestStopCueCancelsPendingStartDelayWithoutWaitingForTimer(t *testing.T) {
 		ProjectID: h.project.ID, Mode: domain.SessionRehearsal, Issuer: "owner",
 		RequestID: "00000000-0000-7000-8000-000000000901",
 	})
-	if started.Status != contracts.CommandCompleted { t.Fatalf("start=%+v", started) }
+	if started.Status != contracts.CommandCompleted {
+		t.Fatalf("start=%+v", started)
+	}
 	finished := make(chan contracts.CommandResult, 1)
 	go func() {
 		finished <- h.service.Go(ctx, CueRequest{
@@ -104,7 +109,9 @@ func TestStopCueCancelsPendingStartDelayWithoutWaitingForTimer(t *testing.T) {
 		h.service.mu.Lock()
 		_, active := h.service.active[session.ID]
 		h.service.mu.Unlock()
-		if active { break }
+		if active {
+			break
+		}
 		select {
 		case <-deadline:
 			t.Fatal("delayed Cue never became active")
@@ -132,6 +139,151 @@ func TestStopCueCancelsPendingStartDelayWithoutWaitingForTimer(t *testing.T) {
 	}
 }
 
+func TestStopCancelsDelayedNestedMixedCueSubtreeWithoutWaiting(t *testing.T) {
+	ctx := context.Background()
+	handle, err := db.Open(ctx, db.Config{DataRoot: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer handle.Close()
+	projects := store.New(handle.DB, clock.Real{})
+	project, revision, err := projects.CreateProject(ctx, store.CreateProjectParams{Name: "Nested Mixed STOP", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := projects.CreateAlias(ctx, domain.ProjectDeviceAlias{ProjectID: project.ID, LogicalName: "SIM", LogicalType: "GENERIC"}); err != nil {
+		t.Fatal(err)
+	}
+	registry := capability.NewRegistry()
+	for _, key := range []string{"sim.test", "sim.secondary"} {
+		if err := registry.Register(key, simulator.Adapter{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	terminal, err := projects.CreateCueWithActions(ctx, domain.Cue{
+		RevisionID: revision.ID, DisplayLabel: "1.1.1", Name: "Delayed Terminal", OrderIndex: 3,
+		CueType: "STANDARD", Criticality: "NORMAL", Enabled: true,
+		ExecutionPolicy: json.RawMessage(`{"start_delay_ms":8000}`),
+	}, []domain.Action{{
+		OrderIndex: 0, ExecutionMode: "SEQUENTIAL", TargetRef: "SIM", CapabilityKey: "sim.test",
+		Parameters: json.RawMessage(`{}`), TimeoutPolicy: json.RawMessage(`{}`), ErrorPolicy: json.RawMessage(`{}`),
+		PriorityClass: domain.PriorityP1, Enabled: true,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	nestedPolicy, _ := json.Marshal(map[string]any{
+		"linked_cue_ids": []string{terminal.ID}, "linked_cue_mode": "TOGETHER",
+	})
+	nested, err := projects.CreateCueWithActions(ctx, domain.Cue{
+		RevisionID: revision.ID, DisplayLabel: "1.1", Name: "Compound Mixed Child", OrderIndex: 2,
+		CueType: "STANDARD", Criticality: "NORMAL", Enabled: true, ExecutionPolicy: nestedPolicy,
+	}, []domain.Action{
+		{OrderIndex: 0, ExecutionMode: "SEQUENTIAL", TargetRef: "SIM", CapabilityKey: "sim.test", Parameters: json.RawMessage(`{"branch":"lighting"}`), TimeoutPolicy: json.RawMessage(`{}`), ErrorPolicy: json.RawMessage(`{}`), PriorityClass: domain.PriorityP1, Enabled: true},
+		{OrderIndex: 1, ExecutionMode: "PARALLEL", TargetRef: "SIM", CapabilityKey: "sim.secondary", Parameters: json.RawMessage(`{"branch":"osc"}`), TimeoutPolicy: json.RawMessage(`{}`), ErrorPolicy: json.RawMessage(`{}`), PriorityClass: domain.PriorityP1, Enabled: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootPolicy, _ := json.Marshal(map[string]any{
+		"linked_cue_ids": []string{nested.ID}, "linked_cue_mode": "TOGETHER",
+	})
+	root, err := projects.CreateCueWithActions(ctx, domain.Cue{
+		RevisionID: revision.ID, DisplayLabel: "1", Name: "Mixed Root", OrderIndex: 1,
+		CueType: "STANDARD", Criticality: "NORMAL", Enabled: true, ExecutionPolicy: rootPolicy,
+	}, []domain.Action{
+		{OrderIndex: 0, ExecutionMode: "SEQUENTIAL", TargetRef: "SIM", CapabilityKey: "sim.test", Parameters: json.RawMessage(`{"branch":"root"}`), TimeoutPolicy: json.RawMessage(`{}`), ErrorPolicy: json.RawMessage(`{}`), PriorityClass: domain.PriorityP1, Enabled: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := projects.SetRevisionStatus(ctx, revision.ID, domain.RevisionValidated); err != nil {
+		t.Fatal(err)
+	}
+	published, _, err := snapshot.NewBuilder(projects).Create(ctx, revision.ID, "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := New(projects, registry)
+	session, started := service.StartSession(ctx, StartRequest{
+		ProjectID: project.ID, Mode: domain.SessionRehearsal, Issuer: "owner",
+		RequestID: "00000000-0000-7000-8000-000000000921",
+	})
+	if started.Status != contracts.CommandCompleted || session.RuntimeSnapshotID != published.ID {
+		t.Fatalf("start=%+v session=%+v", started, session)
+	}
+	goResult := make(chan contracts.CommandResult, 1)
+	go func() {
+		goResult <- service.Go(ctx, CueRequest{
+			SessionID: session.ID, Issuer: "owner", RequestID: "00000000-0000-7000-8000-000000000922",
+		})
+	}()
+	var cueExecution domain.CueExecution
+	var activeActions []domain.ActionExecution
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		executions, listErr := projects.ListCueExecutions(ctx, session.ID)
+		if listErr != nil {
+			t.Fatal(listErr)
+		}
+		if len(executions) == 1 {
+			cueExecution = executions[0]
+			activeActions, listErr = projects.ListActionExecutions(ctx, cueExecution.ID)
+			if listErr != nil {
+				t.Fatal(listErr)
+			}
+			if len(activeActions) == 3 {
+				allDone := true
+				for _, action := range activeActions {
+					allDone = allDone && action.Result == domain.ExecutionCompleted
+				}
+				if allDone {
+					break
+				}
+			}
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if cueExecution.ID == "" || cueExecution.CueID != root.ID || len(activeActions) != 3 {
+		t.Fatalf("root and nested Actions did not finish before terminal delay: Cue=%+v Actions=%+v", cueExecution, activeActions)
+	}
+	for _, action := range activeActions {
+		if action.Result != domain.ExecutionCompleted || action.ActionID == terminal.Actions[0].ID {
+			t.Fatalf("unexpected Action before STOP while terminal Cue is delayed: %+v", action)
+		}
+	}
+
+	stopStarted := time.Now()
+	stop := service.StopCue(ctx, StopRequest{
+		SessionID: session.ID, Issuer: "owner", RequestID: "00000000-0000-7000-8000-000000000923",
+	})
+	if stop.Status != contracts.CommandCompleted {
+		t.Fatalf("STOP nested delayed Cue=%+v", stop)
+	}
+	if elapsed := time.Since(stopStarted); elapsed > 1500*time.Millisecond {
+		t.Fatalf("STOP waited for the terminal Cue's 8s delay: %s", elapsed)
+	}
+	select {
+	case result := <-goResult:
+		if result.Status != contracts.CommandCancelled {
+			t.Fatalf("GO after nested STOP=%+v, want CANCELLED", result)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("nested delayed GO did not terminate after STOP")
+	}
+	finished, err := projects.ListCueExecutions(ctx, session.ID)
+	if err != nil || len(finished) != 1 || finished[0].Result != domain.ExecutionCancelled {
+		t.Fatalf("nested STOP persisted Cue results=%+v err=%v", finished, err)
+	}
+	finalActions, err := projects.ListActionExecutions(ctx, cueExecution.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(finalActions) != 3 {
+		t.Fatalf("delayed terminal Action dispatched after nested STOP: %+v", finalActions)
+	}
+}
+
 func TestRehearsalGoJumpNoReplayAndStopSession(t *testing.T) {
 	h := newRuntimeHarness(t)
 	ctx := context.Background()
@@ -140,7 +292,8 @@ func TestRehearsalGoJumpNoReplayAndStopSession(t *testing.T) {
 		ProjectID: h.project.ID, Mode: domain.SessionRehearsal, Name: "Rehearsal 1", Issuer: "owner",
 		RequestID: "00000000-0000-7000-8000-000000000101",
 	})
-	if startResult.Status != contracts.CommandCompleted || session.ID == "" || session.RuntimeSnapshotID != h.snapshot.ID {
+	if startResult.Status != contracts.CommandCompleted || session.ID == "" || session.RuntimeSnapshotID != h.snapshot.ID ||
+		session.RehearsalPurpose != domain.RehearsalPreview {
 		t.Fatalf("start result=%+v session=%+v", startResult, session)
 	}
 
@@ -207,6 +360,9 @@ func TestRehearsalGoJumpNoReplayAndStopSession(t *testing.T) {
 func TestCueStopCancelsInterruptibleActionAndPersistsTruthfulResult(t *testing.T) {
 	parameters := json.RawMessage(`{"simulation":{"behavior":"COMPLETE","delay_ms":5000}}`)
 	h := newRuntimeHarness(t, parameters)
+	probe := &blockingCancellationExecutor{entered: make(chan struct{})}
+	h.service.executor = newStoppableExecutor(probe)
+	h.service.engine = cueengine.NewWithExecutor(h.store, h.service.executor)
 	ctx := context.Background()
 	session, startResult := h.service.StartSession(ctx, StartRequest{
 		ProjectID: h.project.ID, Mode: domain.SessionRehearsal, Issuer: "owner",
@@ -222,28 +378,13 @@ func TestCueStopCancelsInterruptibleActionAndPersistsTruthfulResult(t *testing.T
 			SessionID: session.ID, Issuer: "owner", RequestID: "00000000-0000-7000-8000-000000000202",
 		})
 	}()
-	// Wait for the interruptible Action to be persisted, not just the Cue.
-	// Under the race detector a STOP between Cue RUNNING and Action dispatch
-	// can validly cancel a Cue that has no ActionExecution row yet.
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		executions, err := h.store.ListCueExecutions(ctx, session.ID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(executions) == 1 {
-			actions, err := h.store.ListActionExecutions(ctx, executions[0].ID)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(actions) == 1 {
-				break
-			}
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("Action did not enter persisted execution before stop test deadline")
-		}
-		time.Sleep(10 * time.Millisecond)
+	// Wait until the test executor confirms dispatch. A persisted ActionExecution
+	// row alone only proves pre-dispatch bookkeeping and is not enough to claim
+	// this test exercised interruption of an in-flight Action.
+	select {
+	case <-probe.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Action did not enter the interruptible executor before stop test deadline")
 	}
 
 	stop := h.service.StopCue(ctx, StopRequest{
@@ -274,6 +415,20 @@ func TestCueStopCancelsInterruptibleActionAndPersistsTruthfulResult(t *testing.T
 	}
 	if len(actions) != 1 || actions[0].Result != domain.ExecutionCancelled || actions[0].ErrorCode == nil || *actions[0].ErrorCode != "CANCELLED" {
 		t.Fatalf("Action execution did not persist cancellation: %+v", actions)
+	}
+}
+
+type blockingCancellationExecutor struct {
+	entered chan struct{}
+	once    sync.Once
+}
+
+func (e *blockingCancellationExecutor) Execute(ctx context.Context, _ capability.Request) capability.Result {
+	e.once.Do(func() { close(e.entered) })
+	<-ctx.Done()
+	return capability.Result{
+		Result: domain.ExecutionCancelled, AckLevel: contracts.AckNone,
+		ErrorCode: "CANCELLED", ResponseSummary: "simulated executor cancelled",
 	}
 }
 
@@ -404,6 +559,19 @@ func TestStopSessionSafetyFailureKeepsSessionActiveAndAllowsRetry(t *testing.T) 
 		t.Fatalf("start=%+v", startResult)
 	}
 
+	tabletStops := 0
+	h.service.rehearsalTabletStop = func(context.Context, domain.Session, contracts.CommandEnvelope) error {
+		tabletStops++
+		return nil
+	}
+	stale := h.service.StopSession(ctx, StopRequest{
+		SessionID: session.ID, Issuer: "owner", RequestID: "00000000-0000-7000-8000-000000000404",
+		RehearsalTabletStopSessionID: "stale-session",
+	})
+	if stale.Status != contracts.CommandRejected || tabletStops != 0 {
+		t.Fatalf("stale optional action was accepted: %+v", stale)
+	}
+
 	h.service.stopSafety = func(_ context.Context, got domain.Session, _ contracts.CommandEnvelope) error {
 		if got.ID != session.ID {
 			t.Fatalf("safety Session=%s want %s", got.ID, session.ID)
@@ -418,7 +586,7 @@ func TestStopSessionSafetyFailureKeepsSessionActiveAndAllowsRetry(t *testing.T) 
 		return fmt.Errorf("lighting blackout was not confirmed")
 	}
 	failedStop := h.service.StopSession(ctx, StopRequest{
-		SessionID: session.ID, Issuer: "owner",
+		SessionID: session.ID, Issuer: "owner", RehearsalTabletStopSessionID: session.ID,
 		RequestID: "00000000-0000-7000-8000-000000000402",
 	})
 	if failedStop.Status != contracts.CommandFailed || failedStop.Error == nil || failedStop.Error.ErrorCode != "SESSION_STOP_SAFETY_FAILED" || !failedStop.Error.Retryable {
@@ -428,13 +596,13 @@ func TestStopSessionSafetyFailureKeepsSessionActiveAndAllowsRetry(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if state.Status != domain.SessionActive || state.EndedAt != nil {
+	if state.Status != domain.SessionActive || state.EndedAt != nil || tabletStops != 0 {
 		t.Fatalf("failed safety incorrectly completed Session: %+v", state)
 	}
 
 	h.service.stopSafety = func(context.Context, domain.Session, contracts.CommandEnvelope) error { return nil }
 	retry := h.service.StopSession(ctx, StopRequest{
-		SessionID: session.ID, Issuer: "owner",
+		SessionID: session.ID, Issuer: "owner", RehearsalTabletStopSessionID: session.ID,
 		RequestID: "00000000-0000-7000-8000-000000000403",
 	})
 	if retry.Status != contracts.CommandCompleted {
@@ -444,7 +612,7 @@ func TestStopSessionSafetyFailureKeepsSessionActiveAndAllowsRetry(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if state.Status != domain.SessionCompleted || state.EndedAt == nil {
+	if state.Status != domain.SessionCompleted || state.EndedAt == nil || tabletStops != 1 {
 		t.Fatalf("retry did not complete Session: %+v", state)
 	}
 }
@@ -506,7 +674,6 @@ func TestStopSessionCancelsActiveCueBeforeCompleting(t *testing.T) {
 		t.Fatalf("session not completed after active Cue cancellation: %+v", state)
 	}
 }
-
 
 func TestForceStopSessionBypassesFailedSafetyAndRecordsAbortedExit(t *testing.T) {
 	h := newRuntimeHarness(t)
@@ -617,7 +784,6 @@ func TestProjectBlackoutWorksWithoutActiveSessionAndUsesPublishedSnapshot(t *tes
 	}
 }
 
-
 func TestSessionStartGateBlocksRehearsalAndShowOnStaleManagedDeviceScope(t *testing.T) {
 	h := newRuntimeHarness(t)
 	h.service.startGate = func(_ context.Context, projectID, snapshotID string) (bool, string, error) {
@@ -638,8 +804,8 @@ func TestSessionStartGateBlocksRehearsalAndShowOnStaleManagedDeviceScope(t *test
 		t.Run(tc.name, func(t *testing.T) {
 			session, result := h.service.StartSession(context.Background(), StartRequest{
 				ProjectID: h.project.ID,
-				Mode: tc.mode,
-				Issuer: "owner",
+				Mode:      tc.mode,
+				Issuer:    "owner",
 				RequestID: tc.requestID,
 			})
 			if session.ID != "" || result.Status != contracts.CommandRejected ||
@@ -657,7 +823,6 @@ func TestSessionStartGateBlocksRehearsalAndShowOnStaleManagedDeviceScope(t *test
 	}
 }
 
-
 func TestSessionStartGateWarningAllowsDegradedRehearsal(t *testing.T) {
 	h := newRuntimeHarness(t)
 	h.service.startGate = func(context.Context, string, string) (bool, string, error) {
@@ -666,9 +831,9 @@ func TestSessionStartGateWarningAllowsDegradedRehearsal(t *testing.T) {
 
 	session, result := h.service.StartSession(context.Background(), StartRequest{
 		ProjectID: h.project.ID,
-		Mode: domain.SessionRehearsal,
-		Name: "Degraded rehearsal",
-		Issuer: "owner",
+		Mode:      domain.SessionRehearsal,
+		Name:      "Degraded rehearsal",
+		Issuer:    "owner",
 		RequestID: "00000000-0000-7000-8000-000000009101",
 	})
 	if result.Status != contracts.CommandCompleted || session.ID == "" {
@@ -695,9 +860,9 @@ func TestSessionStartGateHardInvariantStillBlocks(t *testing.T) {
 
 	session, result := h.service.StartSession(context.Background(), StartRequest{
 		ProjectID: h.project.ID,
-		Mode: domain.SessionRehearsal,
-		Name: "Invalid rehearsal",
-		Issuer: "owner",
+		Mode:      domain.SessionRehearsal,
+		Name:      "Invalid rehearsal",
+		Issuer:    "owner",
 		RequestID: "00000000-0000-7000-8000-000000009102",
 	})
 	if session.ID != "" || result.Status != contracts.CommandRejected ||
@@ -705,7 +870,6 @@ func TestSessionStartGateHardInvariantStillBlocks(t *testing.T) {
 		t.Fatalf("hard Session-start invariant was not blocked: result=%+v session=%+v", result, session)
 	}
 }
-
 
 func TestShowOperationalPreflightWarningStartsDegradedSession(t *testing.T) {
 	h := newRuntimeHarness(t)
@@ -715,9 +879,9 @@ func TestShowOperationalPreflightWarningStartsDegradedSession(t *testing.T) {
 
 	session, result := h.service.StartSession(context.Background(), StartRequest{
 		ProjectID: h.project.ID,
-		Mode: domain.SessionShow,
-		Name: "Degraded show",
-		Issuer: "operator",
+		Mode:      domain.SessionShow,
+		Name:      "Degraded show",
+		Issuer:    "operator",
 		RequestID: "00000000-0000-7000-8000-000000009103",
 	})
 	if result.Status != contracts.CommandCompleted || session.ID == "" || session.Type != domain.SessionShow {
@@ -743,12 +907,438 @@ func TestShowStructuralPreflightBlockStillRejects(t *testing.T) {
 	}
 	session, result := h.service.StartSession(context.Background(), StartRequest{
 		ProjectID: h.project.ID,
-		Mode: domain.SessionShow,
-		Issuer: "owner",
+		Mode:      domain.SessionShow,
+		Issuer:    "owner",
 		RequestID: "00000000-0000-7000-8000-000000009104",
 	})
 	if session.ID != "" || result.Status != contracts.CommandRejected ||
 		result.Error == nil || result.Error.ErrorCode != "SHOW_PREFLIGHT_BLOCKED" {
 		t.Fatalf("structural Preflight block should reject SHOW: result=%+v session=%+v", result, session)
+	}
+}
+
+func TestShowExitRollsBackWhenJournalWriteFails(t *testing.T) {
+	h := newRuntimeHarness(t)
+	ctx := context.Background()
+	session, err := h.store.CreateSession(ctx, h.snapshot.ID, domain.SessionShow, "Show")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.database.DB.ExecContext(ctx, `
+		CREATE TRIGGER reject_show_exit BEFORE INSERT ON event_records
+		WHEN NEW.event_type = 'show.exited' BEGIN SELECT RAISE(ABORT, 'injected journal failure'); END
+	`); err != nil {
+		t.Fatal(err)
+	}
+	req := StopRequest{SessionID: session.ID, Issuer: "operator", RequestID: "12345678-0000-7000-8000-000000000001"}
+	if result := h.service.StopSession(ctx, req); result.Status != contracts.CommandFailed {
+		t.Fatalf("stop = %+v", result)
+	}
+	current, err := h.store.GetSessionFoundation(ctx, session.ID)
+	if err != nil || current.LifecycleState != domain.SessionLifecycleActive {
+		t.Fatalf("session committed without event: %+v err=%v", current, err)
+	}
+	if _, err := h.database.DB.ExecContext(ctx, "DROP TRIGGER reject_show_exit"); err != nil {
+		t.Fatal(err)
+	}
+	req.RequestID = "12345678-0000-7000-8000-000000000002"
+	if result := h.service.StopSession(ctx, req); result.Status != contracts.CommandCompleted {
+		t.Fatalf("retry = %+v error=%+v", result, result.Error)
+	}
+	if result := h.service.StopSession(ctx, req); result.Status != contracts.CommandCompleted {
+		t.Fatalf("replay = %+v", result)
+	}
+	events, err := h.store.ListEvents(ctx, session.ID)
+	if err != nil || len(events) != 1 || events[0].EventType != "show.exited" {
+		t.Fatalf("events = %+v err=%v", events, err)
+	}
+}
+
+func TestShowAdmissionRollsBackWhenJournalWriteFails(t *testing.T) {
+	h := newRuntimeHarness(t)
+	h.service.showGate = func(context.Context, string, string) (bool, string, error) {
+		return true, "", nil
+	}
+	ctx := context.Background()
+	if _, err := h.database.DB.ExecContext(ctx, `
+		CREATE TRIGGER reject_show_admission BEFORE INSERT ON event_records
+		WHEN NEW.event_type = 'show.entered' BEGIN SELECT RAISE(ABORT, 'injected journal failure'); END
+	`); err != nil {
+		t.Fatal(err)
+	}
+	req := StartRequest{ProjectID: h.project.ID, Mode: domain.SessionShow, Issuer: "operator", RequestID: "12345678-0000-7000-8000-000000000003"}
+	if _, result := h.service.StartSession(ctx, req); result.Status != contracts.CommandFailed || result.Error.ErrorCode != "SESSION_START_FAILED" {
+		t.Fatalf("admission = %+v error=%+v", result, result.Error)
+	}
+	active, err := h.store.ActiveSessionForProject(ctx, h.project.ID)
+	if err != nil || active != nil {
+		t.Fatalf("session committed without event: %+v err=%v", active, err)
+	}
+	if _, err := h.database.DB.ExecContext(ctx, "DROP TRIGGER reject_show_admission"); err != nil {
+		t.Fatal(err)
+	}
+	req.RequestID = "12345678-0000-7000-8000-000000000004"
+	started, result := h.service.StartSession(ctx, req)
+	if result.Status != contracts.CommandCompleted || started.ID == "" {
+		t.Fatalf("retry = %+v error=%+v", result, result.Error)
+	}
+	replayed, result := h.service.StartSession(ctx, req)
+	if result.Status != contracts.CommandCompleted || replayed.ID != started.ID {
+		t.Fatalf("replay = %+v error=%+v", result, result.Error)
+	}
+}
+
+func TestSessionlessBlackoutClearCannotOverlapShowAdmission(t *testing.T) {
+	h := newRuntimeHarness(t)
+	ctx := context.Background()
+	h.service.showGate = func(context.Context, string, string) (bool, string, error) {
+		return true, "", nil
+	}
+	var manualEnabled bool
+	h.service.manualOutputStop = func(_ context.Context, _ string, enabled bool) error {
+		manualEnabled = enabled
+		return nil
+	}
+	clearing := make(chan struct{})
+	release := make(chan struct{})
+	t.Cleanup(func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	})
+	h.service.emergencySafety = func(_ context.Context, _ domain.Session, _ contracts.CommandEnvelope, enabled bool) (json.RawMessage, error) {
+		if !enabled {
+			close(clearing)
+			<-release
+		}
+		return json.RawMessage(`{}`), nil
+	}
+	done := make(chan contracts.CommandResult, 1)
+	go func() {
+		done <- h.service.ProjectBlackout(ctx, ProjectEmergencyRequest{ProjectID: h.project.ID, Issuer: "operator", RequestID: "12345678-0000-7000-8000-000000000005"})
+	}()
+	select {
+	case <-clearing:
+	case result := <-done:
+		t.Fatalf("clear did not enter safety handler: %+v", result)
+	case <-time.After(time.Second):
+		t.Fatal("clear did not start")
+	}
+	req := StartRequest{ProjectID: h.project.ID, Mode: domain.SessionShow, Issuer: "operator", RequestID: "12345678-0000-7000-8000-000000000006"}
+	if _, result := h.service.StartSession(ctx, req); result.Status != contracts.CommandRejected ||
+		result.Error == nil || result.Error.ErrorCode != "PROJECT_OUTPUT_TRANSITION_BUSY" {
+		t.Fatalf("SHOW overlapped a sessionless clear: %+v", result)
+	}
+	applied := h.service.ProjectBlackout(ctx, ProjectEmergencyRequest{ProjectID: h.project.ID, Issuer: "operator", Enabled: true, RequestID: "12345678-0000-7000-8000-000000000007"})
+	if applied.Status != contracts.CommandCompleted {
+		t.Fatalf("emergency apply was blocked: %+v", applied)
+	}
+	close(release)
+	if result := <-done; result.Status != contracts.CommandFailed || !manualEnabled {
+		t.Fatalf("superseded clear = %+v manual blackout=%t", result, manualEnabled)
+	}
+	req.RequestID = "12345678-0000-7000-8000-000000000008"
+	if _, result := h.service.StartSession(ctx, req); result.Status != contracts.CommandCompleted {
+		t.Fatalf("SHOW retry = %+v", result)
+	}
+}
+
+func TestForcedExitRollsBackAndRetriesWithoutWaitingForPendingCue(t *testing.T) {
+	h := newRuntimeHarness(t)
+	ctx := context.Background()
+	session, err := h.store.CreateSession(ctx, h.snapshot.ID, domain.SessionShow, "Show")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cueCtx, cancelCue := context.WithCancel(ctx)
+	defer cancelCue()
+	h.service.active[session.ID] = map[string]activeRun{
+		"pending": {correlationID: "pending", done: make(chan struct{}), cancel: cancelCue},
+	}
+	if _, err := h.database.DB.ExecContext(ctx, `
+		CREATE TRIGGER reject_forced_exit BEFORE INSERT ON event_records
+		WHEN NEW.event_type = 'show.force_exited' BEGIN SELECT RAISE(ABORT, 'injected journal failure'); END
+	`); err != nil {
+		t.Fatal(err)
+	}
+	req := StopRequest{SessionID: session.ID, Issuer: "operator", RequestID: "12345678-0000-7000-8000-000000000009"}
+	if result := h.service.ForceStopSession(ctx, req); result.Status != contracts.CommandFailed {
+		t.Fatalf("forced exit = %+v", result)
+	}
+	if cueCtx.Err() == nil {
+		t.Fatal("pending Cue was not canceled")
+	}
+	current, err := h.store.GetSessionFoundation(ctx, session.ID)
+	if err != nil || current.LifecycleState != domain.SessionLifecycleActive {
+		t.Fatalf("session changed without journal: %+v err=%v", current, err)
+	}
+	if _, err := h.database.DB.ExecContext(ctx, "DROP TRIGGER reject_forced_exit"); err != nil {
+		t.Fatal(err)
+	}
+	req.RequestID = "12345678-0000-7000-8000-000000000010"
+	done := make(chan contracts.CommandResult, 1)
+	go func() { done <- h.service.ForceStopSession(ctx, req) }()
+	select {
+	case result := <-done:
+		var payload struct {
+			Confirmed bool `json:"cue_stop_confirmed"`
+		}
+		if result.Status != contracts.CommandCompleted || json.Unmarshal(result.Payload, &payload) != nil || payload.Confirmed {
+			t.Fatalf("retry = %+v payload=%s", result, result.Payload)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("forced exit waited on an unresponsive Cue")
+	}
+	if result := h.service.ForceStopSession(ctx, req); result.Status != contracts.CommandCompleted {
+		t.Fatalf("replay = %+v", result)
+	}
+	events, err := h.store.ListEvents(ctx, session.ID)
+	if err != nil || len(events) != 1 || events[0].EventType != "show.force_exited" {
+		t.Fatalf("events = %+v err=%v", events, err)
+	}
+}
+
+func TestEmergencyBlackoutDispatchesBeforePendingCueCompletes(t *testing.T) {
+	h := newRuntimeHarness(t)
+	ctx := context.Background()
+	session, err := h.store.CreateSession(ctx, h.snapshot.ID, domain.SessionShow, "Show")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cueCtx, cancelCue := context.WithCancel(ctx)
+	defer cancelCue()
+	cueDone := make(chan struct{})
+	defer func() {
+		select {
+		case <-cueDone:
+		default:
+			close(cueDone)
+		}
+	}()
+	h.service.active[session.ID] = map[string]activeRun{
+		"pending": {correlationID: "pending", done: cueDone, cancel: cancelCue},
+	}
+	safety := make(chan bool, 1)
+	h.service.emergencySafety = func(context.Context, domain.Session, contracts.CommandEnvelope, bool) (json.RawMessage, error) {
+		latched, err := h.store.SessionManagedOutputBlackout(ctx, session.ID)
+		safety <- err == nil && latched && cueCtx.Err() != nil
+		return json.RawMessage(`{}`), nil
+	}
+	done := make(chan contracts.CommandResult, 1)
+	go func() {
+		done <- h.service.EmergencyBlackout(ctx, EmergencyRequest{
+			SessionID: session.ID, Issuer: "operator", Enabled: true, RequestID: "12345678-0000-7000-8000-000000000011",
+		})
+	}()
+	select {
+	case ready := <-safety:
+		if !ready {
+			t.Fatal("safe-state dispatch preceded the latch or cancellation")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("safe-state dispatch waited for Cue completion")
+	}
+	close(cueDone)
+	if result := <-done; result.Status != contracts.CommandCompleted {
+		t.Fatalf("blackout = %+v", result)
+	}
+}
+
+func TestEmergencyBlackoutClearRollsBackLatchWhenJournalFails(t *testing.T) {
+	h := newRuntimeHarness(t)
+	ctx := context.Background()
+	session, err := h.store.CreateSession(ctx, h.snapshot.ID, domain.SessionShow, "Show")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.service.emergencySafety = func(context.Context, domain.Session, contracts.CommandEnvelope, bool) (json.RawMessage, error) {
+		return json.RawMessage(`{}`), nil
+	}
+	if err := h.store.SetSessionManagedOutputBlackout(ctx, session.ID, true, "operator"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.database.DB.ExecContext(ctx, `
+		CREATE TRIGGER reject_blackout_clear BEFORE INSERT ON event_records
+		WHEN NEW.event_type = 'runtime.emergency_blackout.cleared' BEGIN SELECT RAISE(ABORT, 'injected journal failure'); END
+	`); err != nil {
+		t.Fatal(err)
+	}
+	req := EmergencyRequest{SessionID: session.ID, Issuer: "operator", RequestID: "12345678-0000-7000-8000-000000000012"}
+	if result := h.service.EmergencyBlackout(ctx, req); result.Status != contracts.CommandFailed {
+		t.Fatalf("clear = %+v", result)
+	}
+	if active, err := h.store.SessionManagedOutputBlackout(ctx, session.ID); err != nil || !active {
+		t.Fatalf("latch after failed journal = %v err=%v", active, err)
+	}
+	if _, err := h.database.DB.ExecContext(ctx, "DROP TRIGGER reject_blackout_clear"); err != nil {
+		t.Fatal(err)
+	}
+	req.RequestID = "12345678-0000-7000-8000-000000000013"
+	for range 2 {
+		if result := h.service.EmergencyBlackout(ctx, req); result.Status != contracts.CommandCompleted {
+			t.Fatalf("retry/replay = %+v", result)
+		}
+	}
+	if events, err := h.store.ListEvents(ctx, session.ID); err != nil || len(events) != 2 ||
+		events[0].EventType != "runtime.emergency_blackout.clear_failed" ||
+		events[1].EventType != "runtime.emergency_blackout.cleared" {
+		t.Fatalf("events = %+v err=%v", events, err)
+	}
+}
+
+func TestEmergencyBlackoutApplySupersedesPendingClear(t *testing.T) {
+	h := newRuntimeHarness(t)
+	ctx := context.Background()
+	session, err := h.store.CreateSession(ctx, h.snapshot.ID, domain.SessionShow, "Show")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.SetSessionManagedOutputBlackout(ctx, session.ID, true, "operator"); err != nil {
+		t.Fatal(err)
+	}
+	clearing := make(chan struct{})
+	clearCanceled := make(chan struct{})
+	h.service.emergencySafety = func(ctx context.Context, _ domain.Session, _ contracts.CommandEnvelope, enabled bool) (json.RawMessage, error) {
+		if !enabled {
+			close(clearing)
+			<-ctx.Done()
+			close(clearCanceled)
+		}
+		return json.RawMessage(`{}`), nil
+	}
+	clearCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	done := make(chan contracts.CommandResult, 1)
+	go func() {
+		done <- h.service.EmergencyBlackout(clearCtx, EmergencyRequest{
+			SessionID: session.ID, Issuer: "operator", RequestID: "12345678-0000-7000-8000-000000000014",
+		})
+	}()
+	select {
+	case <-clearing:
+	case <-clearCtx.Done():
+		t.Fatal("clear did not start")
+	}
+	apply := h.service.EmergencyBlackout(ctx, EmergencyRequest{
+		SessionID: session.ID, Issuer: "operator", Enabled: true, RequestID: "12345678-0000-7000-8000-000000000015",
+	})
+	if apply.Status != contracts.CommandCompleted {
+		t.Fatalf("apply = %+v", apply)
+	}
+	select {
+	case <-clearCanceled:
+	case <-clearCtx.Done():
+		t.Fatal("apply did not preempt the clear")
+	}
+	if result := <-done; result.Status != contracts.CommandFailed {
+		t.Fatalf("superseded clear = %+v", result)
+	}
+	if active, err := h.store.SessionManagedOutputBlackout(ctx, session.ID); err != nil || !active {
+		t.Fatalf("latch after superseded clear = %v err=%v", active, err)
+	}
+}
+
+func TestPendingGoCannotEnterAfterCompletedStopFence(t *testing.T) {
+	h := newRuntimeHarness(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	session, err := h.store.CreateSession(ctx, h.snapshot.ID, domain.SessionShow, "Show")
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := h.database.DB
+	db.SetMaxOpenConns(1)
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	waitCount := db.Stats().WaitCount
+	done := make(chan contracts.CommandResult, 1)
+	go func() {
+		done <- h.service.Go(ctx, CueRequest{
+			SessionID: session.ID, Issuer: "operator", RequestID: "12345678-0000-7000-8000-000000000016",
+		})
+	}()
+	tick := time.NewTicker(time.Millisecond)
+	defer tick.Stop()
+	for db.Stats().WaitCount == waitCount {
+		select {
+		case <-tick.C:
+		case <-ctx.Done():
+			t.Fatal("GO did not block in its prerequisite lookup")
+		}
+	}
+	if !h.service.beginStoppingCues(session.ID) {
+		t.Fatal("STOP could not take its admission fence")
+	}
+	h.service.endStoppingCues(session.ID)
+	if err := conn.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case result := <-done:
+		if result.Status != contracts.CommandRejected || result.Error == nil || result.Error.ErrorCode != "CUE_ADMISSION_SUPERSEDED" {
+			t.Fatalf("old GO passed the STOP fence: %+v", result)
+		}
+	case <-ctx.Done():
+		t.Fatal("GO did not return")
+	}
+}
+
+func TestEmergencyBlackoutClearRejectsLostAuthorityBeforeOutputDispatch(t *testing.T) {
+	h := newRuntimeHarness(t)
+	ctx := context.Background()
+	session, err := h.store.CreateSession(ctx, h.snapshot.ID, domain.SessionShow, "Show")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.SetSessionManagedOutputBlackout(ctx, session.ID, true, "operator"); err != nil {
+		t.Fatal(err)
+	}
+	h.service.emergencySafety = func(context.Context, domain.Session, contracts.CommandEnvelope, bool) (json.RawMessage, error) {
+		t.Fatal("revoked clear attempted output dispatch")
+		return nil, nil
+	}
+	guarded := capability.WithDispatchCheck(ctx, func(context.Context) error {
+		return capability.ErrDispatchAuthorityRevoked
+	})
+	result := h.service.EmergencyBlackout(guarded, EmergencyRequest{
+		SessionID: session.ID, Issuer: "operator", RequestID: "12345678-0000-7000-8000-000000000017",
+	})
+	if result.Status != contracts.CommandRejected || result.Error == nil || result.Error.ErrorCode != "FORBIDDEN" {
+		t.Fatalf("revoked clear = %+v", result)
+	}
+	if active, err := h.store.SessionManagedOutputBlackout(ctx, session.ID); err != nil || !active {
+		t.Fatalf("latch = %v err=%v", active, err)
+	}
+}
+
+func TestEmergencyBlackoutAppliesWhileOrdinaryStopHoldsItsFence(t *testing.T) {
+	h := newRuntimeHarness(t)
+	ctx := context.Background()
+	session, err := h.store.CreateSession(ctx, h.snapshot.ID, domain.SessionShow, "Show")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !h.service.beginStoppingCues(session.ID) {
+		t.Fatal("ordinary STOP could not acquire its fence")
+	}
+	defer h.service.endStoppingCues(session.ID)
+	dispatched := false
+	h.service.emergencySafety = func(_ context.Context, _ domain.Session, _ contracts.CommandEnvelope, enabled bool) (json.RawMessage, error) {
+		dispatched = enabled
+		return json.RawMessage(`{}`), nil
+	}
+	result := h.service.EmergencyBlackout(ctx, EmergencyRequest{
+		SessionID: session.ID, Issuer: "operator", Enabled: true, RequestID: "12345678-0000-7000-8000-000000000018",
+	})
+	if result.Status != contracts.CommandCompleted || !dispatched {
+		t.Fatalf("ordinary STOP blocked emergency dispatch: %+v", result)
+	}
+	if h.service.beginStoppingCues(session.ID) {
+		t.Fatal("emergency completion released the ordinary STOP fence")
 	}
 }

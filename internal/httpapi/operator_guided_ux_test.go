@@ -108,7 +108,7 @@ func TestGuidedOperatorUXAssetsAreEmbeddedAndOffline(t *testing.T) {
 		"/runtime/emergency-blackout",
 		"EMERGENCY BLACKOUT",
 		"CLEAR MANAGED BLACKOUT",
-		"STOP CUE is not a blackout",
+		"STOP ALL CUES is not a blackout",
 		"Audio and external VDMX/OSC",
 		"managed_output_blackout",
 		"BLACKOUT",

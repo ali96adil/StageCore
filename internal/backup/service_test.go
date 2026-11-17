@@ -17,6 +17,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/db"
 	"github.com/ali96adil/StageCore/internal/domain"
 	stageid "github.com/ali96adil/StageCore/internal/id"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/snapshot"
 	"github.com/ali96adil/StageCore/internal/store"
 )
@@ -31,6 +32,57 @@ func TestStateBackupVerifyRestorePreservesProjectSnapshotCuesAndSessionHistory(t
 	defer h.Close()
 	s := store.New(h.DB, clock.Real{})
 	project, revision, runtimeSnapshot, session := createKnownRuntimeHistory(t, ctx, s)
+	draft, err := s.EnsureProjectDraft(ctx, project.ID, "backup-editor", "qualify Cue history restore")
+	if err != nil {
+		t.Fatal(err)
+	}
+	historyCtx := store.WithCueDraftHistoryActor(ctx, "backup-editor")
+	draftCue, err := s.CreateCueWithActions(historyCtx, domain.Cue{
+		RevisionID: draft.ID, DisplayLabel: "2", Name: "Undo after restore", OrderIndex: 1, Enabled: true,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inputHistoryCtx := store.WithInputDraftHistoryActor(ctx, "backup-editor")
+	input, err := s.CreateInput(inputHistoryCtx, domain.InputDefinition{
+		RevisionID: draft.ID, Name: "GO", SourceRef: "osc:/go", EventType: "osc.message", Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	outputHistoryCtx := store.WithOutputDraftHistoryActor(ctx, "backup-editor")
+	output, err := s.CreateOutput(outputHistoryCtx, domain.OutputDefinition{
+		RevisionID: draft.ID, Name: "Backup output", TargetRef: "SIM", CapabilityKey: "local.echo",
+		ValueSchema: json.RawMessage(`{}`), Criticality: "NORMAL",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	routeHistoryCtx := store.WithRouteDraftHistoryActor(ctx, "backup-editor")
+	draftCueID := draftCue.ID
+	draftRoute, err := s.CreateRouteWithActions(routeHistoryCtx, domain.Route{
+		RevisionID: draft.ID, Name: "Undo Route after restore", InputID: input.ID,
+		PriorityClass: domain.PriorityP2, Enabled: true,
+	}, []domain.RouteAction{{CueID: &draftCueID, Parameters: json.RawMessage(`{"source":"backup"}`)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	historyBeforeBackup, err := s.CueDraftHistory(historyCtx, project.ID)
+	if err != nil || !historyBeforeBackup.CanUndo || historyBeforeBackup.RevisionID != draft.ID {
+		t.Fatalf("Draft Undo history before backup=%+v err=%v", historyBeforeBackup, err)
+	}
+	routeHistoryBeforeBackup, err := s.RouteDraftHistory(routeHistoryCtx, project.ID)
+	if err != nil || !routeHistoryBeforeBackup.CanUndo || routeHistoryBeforeBackup.RevisionID != draft.ID {
+		t.Fatalf("Route Draft Undo history before backup=%+v err=%v", routeHistoryBeforeBackup, err)
+	}
+	inputHistoryBeforeBackup, err := s.InputDraftHistory(inputHistoryCtx, project.ID)
+	if err != nil || !inputHistoryBeforeBackup.CanUndo || inputHistoryBeforeBackup.RevisionID != draft.ID {
+		t.Fatalf("Input Draft Undo history before backup=%+v err=%v", inputHistoryBeforeBackup, err)
+	}
+	outputHistoryBeforeBackup, err := s.OutputDraftHistory(outputHistoryCtx, project.ID)
+	if err != nil || !outputHistoryBeforeBackup.CanUndo || outputHistoryBeforeBackup.RevisionID != draft.ID {
+		t.Fatalf("Output Draft Undo history before backup=%+v err=%v", outputHistoryBeforeBackup, err)
+	}
 	manager := managerForStore(s)
 	service, err := backup.New(h, s, root, manager)
 	if err != nil {
@@ -68,7 +120,7 @@ func TestStateBackupVerifyRestorePreservesProjectSnapshotCuesAndSessionHistory(t
 	defer restoredHandle.Close()
 	restoredStore := store.New(restoredHandle.DB, clock.Real{})
 	loadedProject, err := restoredStore.GetProject(ctx, project.ID)
-	if err != nil || loadedProject.CurrentRevisionID != revision.ID {
+	if err != nil || loadedProject.CurrentRevisionID != draft.ID {
 		t.Fatalf("restored project=%#v err=%v", loadedProject, err)
 	}
 	loadedSnapshot, err := restoredStore.GetRuntimeSnapshot(ctx, runtimeSnapshot.ID)
@@ -86,6 +138,163 @@ func TestStateBackupVerifyRestorePreservesProjectSnapshotCuesAndSessionHistory(t
 	executions, err := restoredStore.ListCueExecutions(ctx, session.ID)
 	if err != nil || len(executions) != 1 || executions[0].Result != domain.ExecutionCompleted {
 		t.Fatalf("restored cue history=%#v err=%v", executions, err)
+	}
+	restoredDraftHistory, err := restoredStore.CueDraftHistory(historyCtx, project.ID)
+	if err != nil || !restoredDraftHistory.CanUndo || restoredDraftHistory.RevisionID != draft.ID {
+		t.Fatalf("restored Draft Undo history=%+v err=%v", restoredDraftHistory, err)
+	}
+	restoredRouteHistory, err := restoredStore.RouteDraftHistory(routeHistoryCtx, project.ID)
+	if err != nil || !restoredRouteHistory.CanUndo || restoredRouteHistory.RevisionID != draft.ID {
+		t.Fatalf("restored Route Draft Undo history=%+v err=%v", restoredRouteHistory, err)
+	}
+	restoredInputHistory, err := restoredStore.InputDraftHistory(inputHistoryCtx, project.ID)
+	if err != nil || !restoredInputHistory.CanUndo || restoredInputHistory.RevisionID != draft.ID {
+		t.Fatalf("restored Input Draft Undo history=%+v err=%v", restoredInputHistory, err)
+	}
+	restoredOutputHistory, err := restoredStore.OutputDraftHistory(outputHistoryCtx, project.ID)
+	if err != nil || !restoredOutputHistory.CanUndo || restoredOutputHistory.RevisionID != draft.ID {
+		t.Fatalf("restored Output Draft Undo history=%+v err=%v", restoredOutputHistory, err)
+	}
+	if _, err := restoredStore.UndoOutputDraft(outputHistoryCtx, project.ID); err != nil {
+		t.Fatalf("Output Undo after backup restore: %v", err)
+	}
+	if outputs, err := restoredStore.ListOutputs(ctx, draft.ID); err != nil || len(outputs) != 0 {
+		t.Fatalf("Output Undo after restore left Outputs=%+v err=%v", outputs, err)
+	}
+	if _, err := restoredStore.RedoOutputDraft(outputHistoryCtx, project.ID); err != nil {
+		t.Fatalf("Output Redo after backup restore: %v", err)
+	}
+	outputs, err := restoredStore.ListOutputs(ctx, draft.ID)
+	if err != nil || len(outputs) != 1 || outputs[0].ID != output.ID {
+		t.Fatalf("Output Redo after restore changed identity: outputs=%+v want=%q err=%v", outputs, output.ID, err)
+	}
+	if _, err := restoredStore.UndoInputDraft(inputHistoryCtx, project.ID); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("Input Undo while its Route still references it=%v, want conflict", err)
+	}
+	undoneRoute, err := restoredStore.UndoRouteDraft(routeHistoryCtx, project.ID)
+	if err != nil || undoneRoute.CanUndo || !undoneRoute.CanRedo {
+		t.Fatalf("Route Undo after backup restore=%+v err=%v", undoneRoute, err)
+	}
+	if routes, err := restoredStore.ListRoutes(ctx, draft.ID); err != nil || len(routes) != 0 {
+		t.Fatalf("Route Undo after restore left Routes=%+v err=%v", routes, err)
+	}
+	if _, err := restoredStore.RedoRouteDraft(routeHistoryCtx, project.ID); err != nil {
+		t.Fatalf("Route Redo after backup restore: %v", err)
+	}
+	routes, err := restoredStore.ListRoutes(ctx, draft.ID)
+	if err != nil || len(routes) != 1 || routes[0].ID != draftRoute.ID || len(routes[0].Actions) != 1 ||
+		routes[0].Actions[0].ID != draftRoute.Actions[0].ID || routes[0].Actions[0].CueID == nil ||
+		*routes[0].Actions[0].CueID != draftCue.ID || string(routes[0].Actions[0].Parameters) != `{"source":"backup"}` {
+		t.Fatalf("Route Redo after backup restore changed identity or action: routes=%+v want=%+v err=%v", routes, draftRoute, err)
+	}
+	if _, err := restoredStore.UndoRouteDraft(routeHistoryCtx, project.ID); err != nil {
+		t.Fatalf("remove restored Route before Cue Undo: %v", err)
+	}
+	if _, err := restoredStore.UndoInputDraft(inputHistoryCtx, project.ID); err != nil {
+		t.Fatalf("Input Undo after backup restore: %v", err)
+	}
+	if inputs, err := restoredStore.ListInputs(ctx, draft.ID); err != nil || len(inputs) != 0 {
+		t.Fatalf("Input Undo after restore left Inputs=%+v err=%v", inputs, err)
+	}
+	if _, err := restoredStore.RedoInputDraft(inputHistoryCtx, project.ID); err != nil {
+		t.Fatalf("Input Redo after backup restore: %v", err)
+	}
+	inputs, err := restoredStore.ListInputs(ctx, draft.ID)
+	if err != nil || len(inputs) != 1 || inputs[0].ID != input.ID {
+		t.Fatalf("Input Redo after restore changed identity: inputs=%+v want=%q err=%v", inputs, input.ID, err)
+	}
+	undone, err := restoredStore.UndoCueDraft(historyCtx, project.ID)
+	if err != nil || undone.CanUndo || !undone.CanRedo {
+		t.Fatalf("Undo after backup restore=%+v err=%v", undone, err)
+	}
+	if _, err := restoredStore.GetCue(ctx, draftCue.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("Undo after restore left Draft Cue %s: %v", draftCue.ID, err)
+	}
+}
+
+func TestStateBackupRestorePreservesProspectiveProjectGrants(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	h, err := db.Open(ctx, db.Config{DataRoot: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close()
+	s := store.New(h.DB, clock.Real{})
+	project, _, err := s.CreateProject(ctx, store.CreateProjectParams{Name: "ACL backup show"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const ownerID = "backup-owner"
+	const operatorID = "backup-operator"
+	if _, err := h.DB.ExecContext(ctx, `
+		INSERT INTO local_users (user_id, username, password_hash, role, created_at_us, updated_at_us)
+		VALUES (?, 'backup-owner', 'unused', 'OWNER', 1, 1),
+		       (?, 'backup-operator', 'unused', 'OPERATOR', 1, 1)`, ownerID, operatorID); err != nil {
+		t.Fatal(err)
+	}
+	access, err := projectaccess.New(h.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []projectaccess.Permission{
+		projectaccess.ProjectView,
+		projectaccess.CueEdit,
+		projectaccess.ShowGO,
+	}
+	if err := access.SetPermissions(ctx, ownerID, operatorID, project.ID, want); err != nil {
+		t.Fatal(err)
+	}
+	service, err := backup.New(h, s, root, managerForStore(s))
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := service.CreateStateBackup(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), "restored-data")
+	if _, err := service.Restore(ctx, record.Path, target); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := db.Open(ctx, db.Config{DataRoot: target})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restored.Close()
+	restoredAccess, err := projectaccess.New(restored.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := restoredAccess.PermissionsForUser(ctx, ownerID, operatorID, project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != len(want) {
+		t.Fatalf("restored grants=%v, want %v", got, want)
+	}
+	for _, expected := range want {
+		found := false
+		for _, actual := range got {
+			if actual == expected {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("restored grants=%v, missing %q", got, expected)
+		}
+	}
+	if err := restoredAccess.Check(ctx, operatorID, project.ID, projectaccess.ShowGO); err != nil {
+		t.Fatalf("restored runtime authority failed: %v", err)
+	}
+	var integrity string
+	if err := restored.DB.QueryRowContext(ctx, "PRAGMA integrity_check").Scan(&integrity); err != nil || integrity != "ok" {
+		t.Fatalf("restored ACL database integrity=%q err=%v", integrity, err)
+	}
+	var violations int
+	if err := restored.DB.QueryRowContext(ctx, "SELECT count(*) FROM pragma_foreign_key_check").Scan(&violations); err != nil || violations != 0 {
+		t.Fatalf("restored ACL foreign-key violations=%d err=%v", violations, err)
 	}
 }
 

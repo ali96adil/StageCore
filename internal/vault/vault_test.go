@@ -96,6 +96,79 @@ func TestManagedImportUsesContentIdentityAndKeepsLogicalAssetsDistinct(t *testin
 	}
 }
 
+func TestManagedVaultObjectAndSQLiteMetadataSurviveReopen(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	dataRoot := filepath.Join(root, "data")
+	vaultRoot := filepath.Join(root, "vault")
+
+	firstDB, err := db.Open(ctx, db.Config{DataRoot: dataRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer firstDB.Close()
+	firstStore := store.New(firstDB.DB, clock.Real{})
+	project, _, err := firstStore.CreateProject(ctx, store.CreateProjectParams{Name: "Vault reopen"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstVault, err := vault.Open(vaultRoot, firstStore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := []byte("managed media survives a clean process restart")
+	managed, err := firstVault.ImportManaged(ctx, vault.ImportParams{
+		ProjectID: project.ID, Name: "Restart payload", OriginalFilename: "restart.wav",
+	}, bytes.NewReader(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := firstDB.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	secondDB, err := db.Open(ctx, db.Config{DataRoot: dataRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer secondDB.Close()
+	var integrity string
+	if err := secondDB.DB.QueryRowContext(ctx, "PRAGMA integrity_check").Scan(&integrity); err != nil || integrity != "ok" {
+		t.Fatalf("reopened SQLite integrity=%q err=%v", integrity, err)
+	}
+	secondStore := store.New(secondDB.DB, clock.Real{})
+	reopenedProject, err := secondStore.GetProject(ctx, project.ID)
+	if err != nil || reopenedProject.ID != project.ID {
+		t.Fatalf("reopened Project=%+v err=%v", reopenedProject, err)
+	}
+	reopenedAsset, err := secondStore.GetMediaAsset(ctx, managed.Asset.ID)
+	if err != nil || reopenedAsset.ProjectID != project.ID || reopenedAsset.Name != managed.Asset.Name {
+		t.Fatalf("reopened Media Asset=%+v err=%v", reopenedAsset, err)
+	}
+	reopenedVault, err := vault.Open(vaultRoot, secondStore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, object, err := reopenedVault.OpenObject(ctx, managed.Object.ContentHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	stored, err := io.ReadAll(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if object.ContentHash != managed.Object.ContentHash || object.SizeBytes != int64(len(payload)) || !bytes.Equal(stored, payload) {
+		t.Fatalf("reopened Vault object=%+v bytes=%q", object, stored)
+	}
+	var versions int
+	if err := secondDB.DB.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM media_content_versions WHERE content_version_id = ? AND media_asset_id = ? AND content_hash = ?`,
+		managed.Version.ID, managed.Asset.ID, managed.Object.ContentHash).Scan(&versions); err != nil || versions != 1 {
+		t.Fatalf("reopened media content version count=%d err=%v", versions, err)
+	}
+}
+
 type failAfterReader struct {
 	reader io.Reader
 	failed bool

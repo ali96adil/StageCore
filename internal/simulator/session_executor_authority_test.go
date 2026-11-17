@@ -81,3 +81,26 @@ func TestSessionExecutorOperationalModesHonorPhysicalDispatchAuthority(t *testin
 		})
 	}
 }
+
+func TestSessionExecutorBlocksOperationalDispatchDuringEmergencyBlackout(t *testing.T) {
+	for _, sessionType := range []domain.SessionType{domain.SessionRehearsal, domain.SessionShow} {
+		t.Run(string(sessionType), func(t *testing.T) {
+			var physicalCalls atomic.Int32
+			physical := capability.ExecutorFunc(func(context.Context, capability.Request) capability.Result {
+				physicalCalls.Add(1)
+				return capability.Result{Result: domain.ExecutionCompleted}
+			})
+			session := activeSession("blackout-guard", sessionType)
+			session.ManagedOutputBlackout = true
+			executor := NewSessionExecutor(&fakeSessionResolver{actionSession: session}, physical)
+
+			result := executor.Execute(context.Background(), capability.Request{ExecutionID: "blackout-action"})
+			if result.Result != domain.ExecutionFailed || result.ErrorCode != "EMERGENCY_BLACKOUT_ACTIVE" {
+				t.Fatalf("result=%#v", result)
+			}
+			if physicalCalls.Load() != 0 {
+				t.Fatalf("emergency blackout reached physical executor %d time(s)", physicalCalls.Load())
+			}
+		})
+	}
+}

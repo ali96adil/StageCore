@@ -3,9 +3,25 @@ package companionchannel
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/ali96adil/StageCore/internal/domain"
 )
+
+func (c *RuntimeChannel) projectScopeForCompanion(ctx context.Context, companionID string) (string, error) {
+	assignment, err := c.store.GetActiveRoleAssignmentForCompanion(ctx, companionID)
+	if errors.Is(err, domain.ErrNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	role, err := c.store.GetMachineRole(ctx, assignment.MachineRoleID)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(role.ProjectID), nil
+}
 
 // updateRoleStateFromFreshReport derives role health only from a freshly
 // authenticated Companion report. Runtime transport loss is handled

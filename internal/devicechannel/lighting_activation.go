@@ -10,9 +10,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
-	"github.com/ali96adil/StageCore/internal/lightingnode"
 	stageid "github.com/ali96adil/StageCore/internal/id"
+	"github.com/ali96adil/StageCore/internal/lightingnode"
 )
 
 var ErrLightingActivationNotVerified = errors.New("v2 Lighting Node activation not verified")
@@ -82,9 +83,9 @@ func (r *Runtime) ExecuteLightingActivationAuthorized(
 	}
 	r.assignmentTransitions[input.DeviceID] = true
 	pending := &pendingLightingActivation{
-		connection: current,
+		connection:   current,
 		activationID: activationID,
-		ack: make(chan inboundMessage, 1),
+		ack:          make(chan inboundMessage, 1),
 	}
 	r.pendingLightingActivations[input.DeviceID] = pending
 	r.mu.Unlock()
@@ -111,23 +112,25 @@ func (r *Runtime) ExecuteLightingActivationAuthorized(
 	}
 
 	request := map[string]any{
-		"type":                    "lighting.assignment.activate",
-		"schema_version":          2,
-		"device_id":               input.DeviceID,
-		"activation_id":           activationID,
-		"project_id":              input.ProjectID,
-		"runtime_snapshot_id":     input.RuntimeSnapshotID,
-		"assignment_epoch":        input.ExpectedEpoch,
-		"connection_generation":   generation,
-		"challenge":               challenge,
-		"configuration":           plan.Configuration,
-		"configuration_hash":      plan.ConfigurationHash,
-		"blackout_required":       true,
-		"expected_channels":       lightingnode.MaxChannels,
-		"commands_enabled":        false,
+		"type":                  "lighting.assignment.activate",
+		"schema_version":        2,
+		"device_id":             input.DeviceID,
+		"activation_id":         activationID,
+		"project_id":            input.ProjectID,
+		"runtime_snapshot_id":   input.RuntimeSnapshotID,
+		"assignment_epoch":      input.ExpectedEpoch,
+		"connection_generation": generation,
+		"challenge":             challenge,
+		"configuration":         plan.Configuration,
+		"configuration_hash":    plan.ConfigurationHash,
+		"blackout_required":     true,
+		"expected_channels":     lightingnode.MaxChannels,
+		"commands_enabled":      false,
 	}
-	if err := current.send(request); err != nil {
-		current.close()
+	if err := current.sendAuthorized(ctx, request); err != nil {
+		if ctx.Err() == nil && !errors.Is(err, capability.ErrDispatchAuthorityRevoked) {
+			current.close()
+		}
 		return deviceexperience.LightingActivationCommit{}, fmt.Errorf("%w: activation request failed: %v", ErrLightingActivationNotVerified, err)
 	}
 
@@ -179,24 +182,24 @@ func (r *Runtime) ExecuteLightingActivationAuthorized(
 		return deviceexperience.LightingActivationCommit{}, ErrLightingActivationNotVerified
 	}
 	record, err := r.repository.CommitLightingActivation(ctx, deviceexperience.VerifiedLightingActivationInput{
-		ActivationID: activationID,
-		DeviceID: input.DeviceID,
-		ProjectID: input.ProjectID,
-		RuntimeSnapshotID: input.RuntimeSnapshotID,
-		ExpectedEpoch: input.ExpectedEpoch,
+		ActivationID:         activationID,
+		DeviceID:             input.DeviceID,
+		ProjectID:            input.ProjectID,
+		RuntimeSnapshotID:    input.RuntimeSnapshotID,
+		ExpectedEpoch:        input.ExpectedEpoch,
 		ConnectionGeneration: generation,
-		Challenge: challenge,
-		ConfigurationHash: plan.ConfigurationHash,
-		AckDeviceID: ack.DeviceID,
-		AckProjectID: ack.ProjectID,
+		Challenge:            challenge,
+		ConfigurationHash:    plan.ConfigurationHash,
+		AckDeviceID:          ack.DeviceID,
+		AckProjectID:         ack.ProjectID,
 		AckRuntimeSnapshotID: ack.RuntimeSnapshotID,
-		AckEpoch: ack.AssignmentEpoch,
-		AckGeneration: ack.ConnectionGeneration,
-		AckChallenge: ack.Challenge,
+		AckEpoch:             ack.AssignmentEpoch,
+		AckGeneration:        ack.ConnectionGeneration,
+		AckChallenge:         ack.Challenge,
 		AckConfigurationHash: ack.ConfigurationHash,
-		AckBlackout: ack.Blackout,
-		AckChannelLevels: ack.ChannelLevels,
-		ActorID: actorID,
+		AckBlackout:          ack.Blackout,
+		AckChannelLevels:     ack.ChannelLevels,
+		ActorID:              actorID,
 	})
 	if err == nil {
 		// ACTIVE authority is never inherited by the socket that performed the
@@ -276,11 +279,11 @@ func (r *Runtime) activateLightingScope(
 		return false
 	}
 	if _, err := r.repository.ObserveAuthorizedV2Lighting(ctx, deviceexperience.RuntimeObservation{
-		DeviceID: current.deviceID,
-		Connection: deviceexperience.ConnectionOnline,
-		Readiness: readiness,
+		DeviceID:      current.deviceID,
+		Connection:    deviceexperience.ConnectionOnline,
+		Readiness:     readiness,
 		ObservedState: message.ObservedState,
-		NetworkState: message.NetworkState,
+		NetworkState:  message.NetworkState,
 	}, message.ProjectID, message.RuntimeSnapshotID, message.AssignmentEpoch); err != nil {
 		return false
 	}
@@ -289,6 +292,8 @@ func (r *Runtime) activateLightingScope(
 	same := !r.closed &&
 		r.connections[current.deviceID] == current &&
 		!r.assignmentTransitions[current.deviceID]
+	connectedAt := time.Now().UTC()
+	previousTelemetryProjectID := ""
 	if same {
 		select {
 		case <-current.closed:
@@ -297,27 +302,37 @@ func (r *Runtime) activateLightingScope(
 		}
 	}
 	if same {
+		previousTelemetryProjectID = current.telemetryProjectID
 		current.activeProjectID = message.ProjectID
 		current.activeRuntimeSnapshotID = message.RuntimeSnapshotID
 		current.activeAssignmentEpoch = message.AssignmentEpoch
+		current.telemetryProjectID = message.ProjectID
 		current.commandsEnabled = true
 	}
 	r.mu.Unlock()
 	if !same {
 		return false
 	}
+	if previousTelemetryProjectID != message.ProjectID {
+		if previousTelemetryProjectID != "" {
+			_ = r.repository.RecordTransportTransition(ctx, previousTelemetryProjectID, current.deviceID, false,
+				current.generation, deviceexperience.TransportDisconnectProjectScopeChanged, connectedAt)
+		}
+		_ = r.repository.RecordTransportTransition(ctx, message.ProjectID, current.deviceID, true,
+			current.generation, "", connectedAt)
+	}
 
 	if err := current.send(map[string]any{
-		"type": "runtime.ready",
-		"schema_version": 2,
-		"device_id": current.deviceID,
-		"protocol_version": deviceexperience.ProtocolVersion2,
-		"project_id": message.ProjectID,
-		"runtime_snapshot_id": message.RuntimeSnapshotID,
-		"assignment_epoch": message.AssignmentEpoch,
+		"type":                  "runtime.ready",
+		"schema_version":        2,
+		"device_id":             current.deviceID,
+		"protocol_version":      deviceexperience.ProtocolVersion2,
+		"project_id":            message.ProjectID,
+		"runtime_snapshot_id":   message.RuntimeSnapshotID,
+		"assignment_epoch":      message.AssignmentEpoch,
 		"connection_generation": current.generation,
-		"configuration_hash": scope.ConfigurationHash,
-		"commands_enabled": true,
+		"configuration_hash":    scope.ConfigurationHash,
+		"commands_enabled":      true,
 	}); err != nil {
 		current.close()
 		return false

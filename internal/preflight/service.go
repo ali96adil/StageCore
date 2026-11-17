@@ -14,6 +14,8 @@ import (
 	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/companion"
 	"github.com/ali96adil/StageCore/internal/domain"
+	"github.com/ali96adil/StageCore/internal/lightingnode"
+	"github.com/ali96adil/StageCore/internal/offlineclock"
 	"github.com/ali96adil/StageCore/internal/snapshot"
 	"github.com/ali96adil/StageCore/internal/storagehealth"
 	"github.com/ali96adil/StageCore/internal/store"
@@ -101,6 +103,7 @@ type Service struct {
 	storage            *storagehealth.Monitor
 	connected          ConnectionCheck
 	inspectEnvironment EnvironmentInspection
+	readRTC            func() (offlineclock.RTC, error)
 	now                func() time.Time
 	heartbeatTimeout   time.Duration
 }
@@ -109,6 +112,11 @@ type Option func(*Service)
 
 func WithConnectionCheck(check ConnectionCheck) Option {
 	return func(s *Service) { s.connected = check }
+}
+
+// WithOfflineRTC adds advisory RTC evidence for Hubs configured to boot offline.
+func WithOfflineRTC(read func() (offlineclock.RTC, error)) Option {
+	return func(s *Service) { s.readRTC = read }
 }
 
 func WithClock(now func() time.Time) Option {
@@ -151,9 +159,11 @@ func (s *Service) Evaluate(ctx context.Context, projectID, runtimeSnapshotID str
 		return Report{}, err
 	}
 
+	s.evaluateRTC(&report)
+
 	runtimeSnapshot, err := s.resolveSnapshot(ctx, project.ID, runtimeSnapshotID)
 	if err != nil {
-		if errors.Is(err, domain.ErrNotFound) {
+		if errors.Is(err, domain.ErrNotFound) && strings.TrimSpace(runtimeSnapshotID) == "" {
 			report.add(Block, "snapshot.exists", "snapshot", "Published Runtime Snapshot required", "No published Runtime Snapshot is available for this Project.", project.ID)
 			s.evaluateStorage(&report)
 			return report, nil
@@ -165,6 +175,7 @@ func (s *Service) Evaluate(ctx context.Context, projectID, runtimeSnapshotID str
 
 	manifest, snapshotUsable := s.evaluateSnapshot(ctx, &report, project, runtimeSnapshot)
 	if snapshotUsable {
+		s.evaluateLightingSnapshotSync(ctx, &report, project, runtimeSnapshot, manifest)
 		environments, environmentsUsable := s.loadExecutionEnvironments(ctx, &report, runtimeSnapshot.RevisionID)
 		s.evaluateCapabilitiesAndRoles(ctx, &report, manifest, runtimeSnapshot, environments)
 		if environmentsUsable {
@@ -180,6 +191,97 @@ func (s *Service) Evaluate(ctx context.Context, projectID, runtimeSnapshotID str
 		return report.Checks[i].Category < report.Checks[j].Category
 	})
 	return report, nil
+}
+
+func (s *Service) evaluateLightingSnapshotSync(ctx context.Context, report *Report, project domain.Project, runtimeSnapshot domain.RuntimeSnapshot, manifest snapshot.Manifest) {
+	const key = "lighting.draft_snapshot_sync"
+	currentRevision, err := s.store.GetRevision(ctx, project.CurrentRevisionID)
+	if err != nil || currentRevision.ProjectID != project.ID {
+		detail := "The current Project revision could not be identified; compare Draft lighting with the published Runtime Snapshot before relying on recent edits."
+		if err != nil {
+			detail = err.Error()
+		}
+		report.add(Warn, key, "lighting", "Current Draft lighting configuration could not be compared", detail, project.CurrentRevisionID)
+		return
+	}
+	currentBindings, err := s.store.ListLightingNodeBindings(ctx, currentRevision.ID)
+	if err != nil {
+		report.add(Warn, key, "lighting", "Current Draft lighting configuration could not be compared", err.Error(), currentRevision.ID)
+		return
+	}
+	currentHash, err := lightingBindingsFingerprint(currentBindings)
+	if err != nil {
+		report.add(Warn, key, "lighting", "Current Draft lighting configuration could not be compared", err.Error(), currentRevision.ID)
+		return
+	}
+	snapshotHash, err := lightingBindingsFingerprint(manifest.LightingNodes)
+	if err != nil {
+		report.add(Warn, key, "lighting", "Published Snapshot lighting configuration could not be compared", err.Error(), runtimeSnapshot.ID)
+		return
+	}
+	if currentHash != snapshotHash {
+		detail := fmt.Sprintf("Current revision %d has lighting configuration that differs from published Runtime Snapshot %s. Runtime execution remains bound to the immutable published Snapshot; review and validate/publish the Draft if these changes are intended.", currentRevision.RevisionNumber, runtimeSnapshot.ID)
+		report.add(Warn, key, "lighting", "Draft lighting configuration differs from published Snapshot", detail, currentRevision.ID)
+		return
+	}
+	report.add(Pass, key, "lighting", "Draft lighting configuration matches published Snapshot", fmt.Sprintf("Current revision %d matches Runtime Snapshot %s.", currentRevision.RevisionNumber, runtimeSnapshot.ID), currentRevision.ID)
+}
+
+func lightingBindingsFingerprint(bindings []lightingnode.ProjectBinding) (string, error) {
+	type fingerprintBinding struct {
+		DeviceID      string          `json:"device_id"`
+		ProfileID     string          `json:"profile_id"`
+		Configuration json.RawMessage `json:"configuration"`
+		Aliases       json.RawMessage `json:"aliases"`
+	}
+	normalized := make([]fingerprintBinding, 0, len(bindings))
+	for _, binding := range bindings {
+		configuration, err := lightingnode.CanonicalConfiguration(binding.Configuration)
+		if err != nil {
+			return "", fmt.Errorf("canonicalize lighting configuration for %s: %w", binding.DeviceID, err)
+		}
+		aliases := binding.Aliases
+		if aliases == nil {
+			aliases = map[string]string{}
+		}
+		aliasJSON, err := json.Marshal(aliases)
+		if err != nil {
+			return "", fmt.Errorf("encode lighting aliases for %s: %w", binding.DeviceID, err)
+		}
+		normalized = append(normalized, fingerprintBinding{
+			DeviceID: binding.DeviceID, ProfileID: binding.ProfileID,
+			Configuration: configuration, Aliases: aliasJSON,
+		})
+	}
+	sort.Slice(normalized, func(i, j int) bool { return normalized[i].DeviceID < normalized[j].DeviceID })
+	encoded, err := json.Marshal(normalized)
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(encoded)
+	return hex.EncodeToString(digest[:]), nil
+}
+
+func (s *Service) evaluateRTC(report *Report) {
+	if s.readRTC == nil {
+		return
+	}
+	const key = "clock.offline_rtc"
+	rtc, err := s.readRTC()
+	if err != nil {
+		report.add(Warn, key, "clock", "Offline RTC evidence unavailable", "Check the local RTC with stagecore clock and compare it with a trusted local time reference. Offline boot and local authentication timing remain unqualified.", "")
+		return
+	}
+	evidence := offlineclock.Evaluate(s.now(), rtc, time.Time{})
+	if !evidence.RTCAgrees {
+		report.add(Warn, key, "clock", "Hub clock and RTC disagree or are implausible", "Run stagecore clock, then compare the Hub and RTC against a trusted local (LAN) time reference before rehearsal. If the Hub clock is outside the token validity window, local sign-in and session checks can fail.", "")
+		return
+	}
+	if !evidence.RTCBootEvidence {
+		report.add(Warn, key, "clock", "RTC agrees but was not reported as the boot clock", "Check the local RTC with stagecore clock and verify an internet-disconnected cold boot; agreement after startup does not prove the RTC supplied boot time. A stale Hub clock can invalidate local sign-in and session checks.", "")
+		return
+	}
+	report.add(Pass, key, "clock", "RTC boot evidence and clock agreement observed", "Check absolute time separately against a fresh trusted reference.", "")
 }
 
 func (s *Service) ShowGate(ctx context.Context, projectID, runtimeSnapshotID string) (bool, string, error) {
@@ -199,8 +301,15 @@ func (s *Service) ShowGate(ctx context.Context, projectID, runtimeSnapshotID str
 }
 
 func (s *Service) resolveSnapshot(ctx context.Context, projectID, runtimeSnapshotID string) (domain.RuntimeSnapshot, error) {
-	if strings.TrimSpace(runtimeSnapshotID) != "" {
-		return s.store.GetRuntimeSnapshot(ctx, strings.TrimSpace(runtimeSnapshotID))
+	if id := strings.TrimSpace(runtimeSnapshotID); id != "" {
+		requested, err := s.store.GetRuntimeSnapshot(ctx, id)
+		if err != nil {
+			return domain.RuntimeSnapshot{}, err
+		}
+		if requested.ProjectID != projectID {
+			return domain.RuntimeSnapshot{}, domain.ErrNotFound
+		}
+		return requested, nil
 	}
 	latest, err := s.store.LatestPublishedRuntimeSnapshotForProject(ctx, projectID)
 	if err != nil {
@@ -420,7 +529,7 @@ func (s *Service) evaluateMIDIDestinations(ctx context.Context, report *Report, 
 			}
 			switch matches {
 			case 1:
-				report.add(Pass, "midi.destination."+action.ID, "companion", "MIDI destination is available on the assigned Companion", name, action.ID)
+				report.add(Pass, "midi.destination."+action.ID, "companion", "MIDI destination is listed on the assigned Companion", "Companion inventory lists this exact name. This does not verify Ableton receipt or external execution; use an attended non-show test for end-to-end evidence.", action.ID)
 			case 0:
 				report.add(Block, "midi.destination."+action.ID, "companion", "MIDI destination is unavailable on the assigned Companion", name, action.ID)
 			default:

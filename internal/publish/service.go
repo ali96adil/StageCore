@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
+	"github.com/ali96adil/StageCore/internal/actionpolicy"
 	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/cuegroup"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
@@ -134,6 +136,9 @@ func (s *Service) Validate(ctx context.Context, projectID, revisionID string) (R
 			if !json.Valid(action.Parameters) || !json.Valid(action.TimeoutPolicy) || !json.Valid(action.ErrorPolicy) {
 				block("ACTION_POLICY_INVALID", "Action parameters/timeout/error policy must be valid JSON", action.ID)
 			}
+			if _, err := actionpolicy.Parse(action.TimeoutPolicy, action.ErrorPolicy); err != nil {
+				block("ACTION_POLICY_INVALID", err.Error(), action.ID)
+			}
 			validateLightingCueAction(block, aliasByName, lightingBindings, action)
 		}
 	}
@@ -258,7 +263,9 @@ func (s *Service) Publish(ctx context.Context, projectID, revisionID, createdBy 
 	}
 	created, _, err := s.builder.Create(ctx, revisionID, createdBy)
 	if err != nil {
-		if recoverErr := s.store.ReopenCurrentValidatedRevisionIfUnpublished(ctx, projectID, revisionID); recoverErr != nil {
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if recoverErr := s.store.ReopenCurrentValidatedRevisionIfUnpublished(cleanup, projectID, revisionID); recoverErr != nil {
 			return domain.RuntimeSnapshot{}, report, fmt.Errorf("create immutable Runtime Snapshot: %v; restore Draft after failed publish: %w", err, recoverErr)
 		}
 		return domain.RuntimeSnapshot{}, report, fmt.Errorf("create immutable Runtime Snapshot: %w", err)

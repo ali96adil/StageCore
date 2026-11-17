@@ -481,7 +481,7 @@ function f017RenderDialog(dialog, policy, draft = null, message = "", messageKin
   const editable = !active.built_in && policy.allowed;
   const policyMessage = policy.locked ? f017Text("workspace.locked") : policy.unknown ? f017Text("workspace.lock_unknown") : "";
 
-  dialog.innerHTML = `<form method="dialog" class="f017-dialog-form">
+  dialog.innerHTML = `<form class="f017-dialog-form">
     <div class="dialog-head">
       <div><p class="eyebrow">F-017</p><h2>${esc(f017Text("workspace.title"))}</h2><p class="muted">${esc(f017Text("workspace.presentation_only"))}</p></div>
       <button class="icon-button f017-close" type="button" aria-label="${esc(f017Text("workspace.close"))}">×</button>
@@ -514,9 +514,11 @@ function f017RenderDialog(dialog, policy, draft = null, message = "", messageKin
     <div class="dialog-actions f017-dialog-actions">
       <button class="button ghost f017-reset" type="button">${esc(f017Text("workspace.reset"))}</button>
       ${!active.built_in ? `<button class="button danger f017-delete" type="button" ${editable ? "" : "disabled"}>${esc(f017Text("workspace.delete"))}</button><button class="button primary f017-save" type="button" ${editable ? "" : "disabled"}>${esc(f017Text("workspace.save"))}</button>` : ""}
-      <button class="button f017-close" value="close" type="submit">${esc(f017Text("workspace.close"))}</button>
+      <button class="button f017-close" type="button">${esc(f017Text("workspace.close"))}</button>
     </div>
   </form>`;
+
+  dialog.querySelector("form")?.addEventListener("submit", (event) => event.preventDefault());
 
   const working = f017NormalizeProfile(active, active.base_preset);
   working.profile_id = active.profile_id;
@@ -636,7 +638,7 @@ openProject = async function f017OpenProject(projectID, ...args) {
   const preferred = f017PreferredPage(projectID);
   const result = await f017BaseOpenProject(projectID, ...args);
   f017ApplyProfile();
-  if (preferred !== "dashboard") await navigate(preferred);
+  if (preferred !== "dashboard" && !state?.showSessionActive) await navigate(preferred);
   return result;
 };
 

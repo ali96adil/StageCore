@@ -1,11 +1,13 @@
 package extension
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/domain"
 )
 
@@ -137,5 +139,23 @@ func TestUninstallRemovesPermissionReviewsButRetainsPackageMetadataForReinstall(
 	}
 	if reinstalled.InstallationID == installed.InstallationID {
 		t.Fatalf("reinstall reused deleted installation identity: %s", reinstalled.InstallationID)
+	}
+}
+
+func TestRevokedUninstallKeepsInstalledPackage(t *testing.T) {
+	h := newDependencyTestHarness(t)
+	pkg := registerActivationStagingPackage(t, h, nil)
+	installed, err := h.installer.InstallPlanned(h.ctx, pkg.PackageID, "owner")
+	if err != nil { t.Fatal(err) }
+	supervisor, _, _, _ := newRuntimeSupervisorForHarness(t, h, pkg)
+	defer supervisor.Close()
+	ctx := capability.WithDispatchCheck(h.ctx, func(context.Context) error {
+		return errors.New("Owner session revoked")
+	})
+	if _, err := supervisor.Uninstall(ctx, installed.InstallationID, "owner"); !errors.Is(err, capability.ErrDispatchAuthorityRevoked) {
+		t.Fatalf("uninstall returned %v", err)
+	}
+	if _, err := h.installer.Get(h.ctx, installed.InstallationID); err != nil {
+		t.Fatalf("revoked uninstall removed the installation or payload: %v", err)
 	}
 }

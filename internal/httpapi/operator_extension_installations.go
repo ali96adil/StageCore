@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/extension"
 	"github.com/ali96adil/StageCore/internal/securityaudit"
@@ -38,8 +39,11 @@ func WithOperatorExtensionInstaller(users *userauth.Service, installer *extensio
 	}
 }
 
-func (h *operatorExtensionInstaller) list(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+func (h *operatorExtensionInstaller) list(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 	items, err := h.installer.List(r.Context(), strings.TrimSpace(r.URL.Query().Get("extension_id")))
+	if !recheckExtensionReadResponse(w, r, h.users, session, userauth.PermissionProjectRead) {
+		return
+	}
 	if errors.Is(err, extension.ErrInstalledPayloadIntegrity) {
 		writeJSON(w, http.StatusConflict, map[string]any{"error_code": "EXTENSION_INSTALL_INTEGRITY_FAILED"})
 		return
@@ -51,8 +55,11 @@ func (h *operatorExtensionInstaller) list(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, map[string]any{"installations": items})
 }
 
-func (h *operatorExtensionInstaller) get(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+func (h *operatorExtensionInstaller) get(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 	item, err := h.installer.Get(r.Context(), strings.TrimSpace(r.PathValue("installation_id")))
+	if !recheckExtensionReadResponse(w, r, h.users, session, userauth.PermissionProjectRead) {
+		return
+	}
 	switch {
 	case errors.Is(err, domain.ErrNotFound):
 		writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "EXTENSION_INSTALLATION_NOT_FOUND"})
@@ -65,8 +72,11 @@ func (h *operatorExtensionInstaller) get(w http.ResponseWriter, r *http.Request,
 	}
 }
 
-func (h *operatorExtensionInstaller) plan(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+func (h *operatorExtensionInstaller) plan(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 	plan, err := h.installer.PlanInstall(r.Context(), strings.TrimSpace(r.PathValue("package_id")))
+	if !recheckExtensionReadResponse(w, r, h.users, session, userauth.PermissionProjectRead) {
+		return
+	}
 	switch {
 	case errors.Is(err, domain.ErrNotFound):
 		writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "EXTENSION_PACKAGE_NOT_FOUND"})
@@ -108,28 +118,37 @@ func (h *operatorExtensionInstaller) install(w http.ResponseWriter, r *http.Requ
 		case errors.Is(err, extension.ErrDependencyPlanBlocked):
 			status = http.StatusConflict
 			code = "EXTENSION_DEPENDENCY_PLAN_BLOCKED"
+		case errors.Is(err, capability.ErrDispatchAuthorityRevoked):
+			status = http.StatusForbidden
+			code = capability.DispatchAuthorityRevokedCode
 		}
 		response["error_code"] = code
 		var planErr *extension.InstallPlanError
 		if errors.As(err, &planErr) {
 			response["plan"] = planErr.Plan
 			h.record(r, session, packageID, securityaudit.ResultRejected, code, map[string]any{
-				"plan_status": planErr.Plan.Status,
+				"plan_status":   planErr.Plan.Status,
 				"install_steps": len(planErr.Plan.Steps),
-				"blockers": len(planErr.Plan.Blockers),
+				"blockers":      len(planErr.Plan.Blockers),
 			})
 		} else {
 			h.record(r, session, packageID, securityaudit.ResultRejected, code, nil)
+		}
+		if writeRevokedExtensionMutationResponse(w, r, h.users, session) {
+			return
 		}
 		writeJSON(w, status, response)
 		return
 	}
 	h.record(r, session, item.PackageID, securityaudit.ResultSuccess, "", map[string]any{
 		"installation_id": item.InstallationID,
-		"extension_id": item.ExtensionID,
-		"version": item.Version,
+		"extension_id":    item.ExtensionID,
+		"version":         item.Version,
 		"lifecycle_state": item.LifecycleState,
 	})
+	if writeRevokedExtensionMutationResponse(w, r, h.users, session) {
+		return
+	}
 	writeJSON(w, http.StatusCreated, item)
 }
 
@@ -138,14 +157,14 @@ func (h *operatorExtensionInstaller) record(r *http.Request, session userauth.Se
 		return
 	}
 	_, _ = h.audit.Append(r.Context(), securityaudit.Event{
-		EventType: "extension.package.install",
-		ActorUserID: session.User.ID,
+		EventType:     "extension.package.install",
+		ActorUserID:   session.User.ID,
 		ActorUsername: session.User.Username,
-		Source: "operator-web",
-		ResourceType: "extension_package",
-		ResourceID: strings.TrimSpace(resourceID),
-		Result: result,
-		Reason: reason,
-		Metadata: metadata,
+		Source:        "operator-web",
+		ResourceType:  "extension_package",
+		ResourceID:    strings.TrimSpace(resourceID),
+		Result:        result,
+		Reason:        reason,
+		Metadata:      metadata,
 	})
 }

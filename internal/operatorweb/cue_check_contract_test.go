@@ -11,7 +11,7 @@ func TestCueWorkspaceProvidesPublishedCueCheckControls(t *testing.T) {
 	for _, marker := range []string{
 		"Cue Check",
 		"Test Cue",
-		"STOP CUE",
+		"STOP ALL CUES",
 		"BLACKOUT",
 		"CLEAR BLACKOUT",
 		"async function testCueFromWorkspace",

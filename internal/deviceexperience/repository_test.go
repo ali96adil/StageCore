@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +16,12 @@ import (
 )
 
 var phase4Time = time.Date(2026, 9, 8, 15, 30, 0, 0, time.UTC)
+
+type failingTransportEventRecorder struct{}
+
+func (failingTransportEventRecorder) AppendEvent(context.Context, *string, contracts.EventEnvelope) (contracts.EventEnvelope, error) {
+	return contracts.EventEnvelope{}, errors.New("simulated telemetry store failure")
+}
 
 func newRepository(t *testing.T) (*deviceexperience.Repository, *db.Handle, string) {
 	t.Helper()
@@ -112,6 +119,94 @@ func TestMarkAllDevicesOfflinePreservesLastSeen(t *testing.T) {
 	}
 	if !loaded.Runtime.LastSeenAt.Equal(lastSeen) {
 		t.Fatalf("startup reset changed Last Seen: before=%s after=%s", lastSeen, loaded.Runtime.LastSeenAt)
+	}
+}
+
+func TestMarkAllDevicesOfflineRecordsOnlyPreviouslyOnlineProjectTransports(t *testing.T) {
+	ctx := context.Background()
+	h, err := db.Open(ctx, db.Config{DataRoot: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close()
+	stageStore := store.New(h.DB, clock.Fixed{Time: phase4Time})
+	project, _, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "Restart evidence", CreatedBy: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, err := deviceexperience.NewRepository(h.DB,
+		deviceexperience.WithClock(func() time.Time { return phase4Time }),
+		deviceexperience.WithEventRecorder(stageStore),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"online-01", "offline-02"} {
+		if _, err := repo.UpsertDevice(ctx, deviceexperience.Device{
+			ID: id, ProjectID: project.ID, Kind: deviceexperience.DeviceGeneric,
+			DisplayName: id, ProtocolVersion: deviceexperience.ProtocolVersion1, Enabled: true,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := repo.ObserveDevice(ctx, deviceexperience.RuntimeObservation{
+		DeviceID: "online-01", Connection: deviceexperience.ConnectionOnline,
+		Readiness: deviceexperience.ReadinessReady, ObservedState: json.RawMessage(`{"token":"must-not-export"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.MarkAllDevicesOffline(ctx); err != nil {
+		t.Fatal(err)
+	}
+	events, truncated, err := stageStore.ListProjectDeviceTransportEvents(ctx, project.ID, phase4Time, phase4Time)
+	if err != nil || truncated || len(events) != 1 {
+		t.Fatalf("restart transport events=%+v truncated=%v err=%v", events, truncated, err)
+	}
+	if events[0].EventType != contracts.StageDeviceTransportDisconnectedEventType ||
+		!strings.Contains(string(events[0].Payload), `"transport_state":"DISCONNECTED"`) ||
+		!strings.Contains(string(events[0].Payload), `"reason":"HUB_RESTART"`) ||
+		strings.Contains(string(events[0].Payload), "must-not-export") {
+		t.Fatalf("restart transport event=%+v payload=%s", events[0], events[0].Payload)
+	}
+}
+
+func TestMarkAllDevicesOfflineRemainsAuthoritativeWhenTelemetryWriteFails(t *testing.T) {
+	ctx := context.Background()
+	h, err := db.Open(ctx, db.Config{DataRoot: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close()
+	stageStore := store.New(h.DB, clock.Fixed{Time: phase4Time})
+	project, _, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "Telemetry failure", CreatedBy: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, err := deviceexperience.NewRepository(h.DB,
+		deviceexperience.WithClock(func() time.Time { return phase4Time }),
+		deviceexperience.WithEventRecorder(failingTransportEventRecorder{}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.UpsertDevice(ctx, deviceexperience.Device{
+		ID: "online-fail-telemetry", ProjectID: project.ID, Kind: deviceexperience.DeviceGeneric,
+		DisplayName: "Telemetry failure", ProtocolVersion: deviceexperience.ProtocolVersion1, Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.ObserveDevice(ctx, deviceexperience.RuntimeObservation{
+		DeviceID: "online-fail-telemetry", Connection: deviceexperience.ConnectionOnline,
+		Readiness: deviceexperience.ReadinessReady,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.MarkAllDevicesOffline(ctx); err != nil {
+		t.Fatalf("telemetry failure prevented offline reset: %v", err)
+	}
+	device, err := repo.GetDevice(ctx, "online-fail-telemetry")
+	if err != nil || device.Runtime == nil || device.Runtime.Connection != deviceexperience.ConnectionOffline {
+		t.Fatalf("authoritative offline reset=%+v err=%v", device.Runtime, err)
 	}
 }
 
@@ -333,7 +428,7 @@ func TestDeviceDisabledStateCannotBeResetByReconnect(t *testing.T) {
 		ID: "tablet-disabled-01", ProjectID: projectID,
 		Kind: deviceexperience.DeviceTabletPlayer, DisplayName: "Disabled tablet",
 		ProtocolVersion: deviceexperience.ProtocolVersion1,
-		Capabilities: []string{"tablet.media.play"}, Enabled: false,
+		Capabilities:    []string{"tablet.media.play"}, Enabled: false,
 	}
 	if _, err := repo.UpsertDevice(ctx, original); err != nil {
 		t.Fatal(err)
@@ -361,7 +456,7 @@ func TestUnassignedAndDisabledDevicesCannotAdvertiseReady(t *testing.T) {
 	ctx := context.Background()
 	repo, _, projectID := newRepository(t)
 	cases := []struct {
-		name string
+		name   string
 		device deviceexperience.Device
 	}{
 		{name: "unassigned", device: deviceexperience.Device{

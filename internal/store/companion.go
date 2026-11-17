@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/domain"
 	stageid "github.com/ali96adil/StageCore/internal/id"
@@ -188,7 +189,7 @@ func (s *Store) CreateMachineRole(ctx context.Context, projectID string, p Creat
 	}
 	now := s.clock.Now().UTC()
 	nowUS := clock.UnixMicros(now)
-	if _, err := s.db.ExecContext(ctx, `
+	if _, err := capability.ExecAuthorized(ctx, s.db, `
 		INSERT INTO machine_roles (
 			machine_role_id, project_id, role_key, display_name, required_capabilities_json,
 			required_runtime_snapshot_id, required_config_hash, required, created_at_us, updated_at_us
@@ -222,7 +223,7 @@ func (s *Store) UpdateMachineRoleDefinition(ctx context.Context, projectID, mach
 		return domain.MachineRole{}, fmt.Errorf("encode role capabilities: %w", err)
 	}
 	nowUS := clock.UnixMicros(s.clock.Now())
-	result, err := s.db.ExecContext(ctx, `
+	result, err := capability.ExecAuthorized(ctx, s.db, `
 		UPDATE machine_roles
 		SET display_name = ?, required_capabilities_json = ?, required = ?, updated_at_us = ?
 		WHERE machine_role_id = ? AND project_id = ?`,
@@ -275,7 +276,7 @@ func (s *Store) SetMachineRoleRetired(ctx context.Context, projectID, machineRol
 		retiredValue = 1
 		retiredAt = nowUS
 	}
-	result, err := s.db.ExecContext(ctx, `
+	result, err := capability.ExecAuthorized(ctx, s.db, `
 		UPDATE machine_roles
 		SET retired = ?, retired_at_us = ?, updated_at_us = ?
 		WHERE machine_role_id = ? AND project_id = ?`,
@@ -334,7 +335,7 @@ func (s *Store) DeleteMachineRoleIfUnreferenced(ctx context.Context, projectID, 
 			return fmt.Errorf("%w: Machine Role is still referenced by %s", domain.ErrConflict, check.label)
 		}
 	}
-	result, err := s.db.ExecContext(ctx, `DELETE FROM machine_roles WHERE machine_role_id = ? AND project_id = ? AND retired = 1`, machineRoleID, projectID)
+	result, err := capability.ExecAuthorized(ctx, s.db, `DELETE FROM machine_roles WHERE machine_role_id = ? AND project_id = ? AND retired = 1`, machineRoleID, projectID)
 	if err != nil {
 		return fmt.Errorf("delete machine role: %w", err)
 	}
@@ -366,6 +367,9 @@ func (s *Store) AssignMachineRole(ctx context.Context, machineRoleID, companionI
 		return domain.RoleAssignment{}, fmt.Errorf("begin role assignment: %w", err)
 	}
 	defer tx.Rollback()
+	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
+		return domain.RoleAssignment{}, err
+	}
 
 	var retired int
 	if err := tx.QueryRowContext(ctx, `SELECT retired FROM machine_roles WHERE machine_role_id = ?`, machineRoleID).Scan(&retired); err != nil {
@@ -432,7 +436,7 @@ func (s *Store) GetActiveRoleAssignment(ctx context.Context, machineRoleID strin
 
 func (s *Store) ReleaseRoleAssignment(ctx context.Context, assignmentID string) error {
 	nowUS := clock.UnixMicros(s.clock.Now())
-	result, err := s.db.ExecContext(ctx, `
+	result, err := capability.ExecAuthorized(ctx, s.db, `
 		UPDATE role_assignments
 		SET state = 'RELEASED', released_at_us = ?, last_evaluated_at_us = ?
 		WHERE role_assignment_id = ? AND state <> 'RELEASED'`, nowUS, nowUS, assignmentID)

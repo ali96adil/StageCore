@@ -25,10 +25,12 @@ const (
 	AckTransportOnly AckLevel = "TRANSPORT_ONLY"
 	AckAccepted      AckLevel = "ACCEPTED"
 	AckDevice        AckLevel = "DEVICE_ACK"
+	AckApplication   AckLevel = "APPLICATION_ACK"
 	AckVerifiedState AckLevel = "VERIFIED_STATE"
 )
 
 type CommandEnvelope struct {
+	ControlGeneration int64           `json:"control_generation,omitempty"`
 	CommandID         string          `json:"command_id"`
 	CommandType       string          `json:"command_type"`
 	SchemaVersion     int             `json:"schema_version"`
@@ -77,3 +79,10 @@ type EventEnvelope struct {
 	TraceContext      json.RawMessage `json:"trace_context,omitempty"`
 	Payload           json.RawMessage `json:"payload"`
 }
+
+const (
+	StageDeviceTransportConnectedEventType    = "stage_device.transport.connected"
+	StageDeviceTransportDisconnectedEventType = "stage_device.transport.disconnected"
+	CompanionTransportConnectedEventType      = "companion.transport.connected"
+	CompanionTransportDisconnectedEventType   = "companion.transport.disconnected"
+)

@@ -135,3 +135,43 @@ func TestDuplicateDraftCueRegeneratesExplicitTimecodeBindingID(t *testing.T) {
 		t.Fatalf("duplicate changed timecode schedule: %#v", timecodePolicy)
 	}
 }
+
+func TestDeleteDraftCueRejectsIncomingLinks(t *testing.T) {
+	ctx := context.Background()
+	s, _ := newStore(t)
+	_, revision, err := s.CreateProject(ctx, store.CreateProjectParams{Name: "Linked cues", CreatedBy: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, err := s.CreateCueWithActions(ctx, domain.Cue{
+		RevisionID: revision.ID, DisplayLabel: "1", Name: "Child", OrderIndex: 1, Enabled: true,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := json.Marshal(map[string]any{
+		"linked_cue_ids": []string{"\t" + child.ID + " "}, "operator_cue_color": "purple",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent, err := s.CreateCueWithActions(ctx, domain.Cue{
+		RevisionID: revision.ID, DisplayLabel: "2", Name: "Parent", OrderIndex: 2, Enabled: true,
+		ExecutionPolicy: policy,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteDraftCue(ctx, revision.ID, child.ID); err != store.ErrDraftCueLinked {
+		t.Fatalf("delete linked child: got %v, want ErrDraftCueLinked", err)
+	}
+	if _, err := s.GetCue(ctx, child.ID); err != nil {
+		t.Fatalf("rejected deletion changed child: %v", err)
+	}
+	if err := s.DeleteDraftCue(ctx, revision.ID, parent.ID); err != nil {
+		t.Fatalf("delete parent: %v", err)
+	}
+	if err := s.DeleteDraftCue(ctx, revision.ID, child.ID); err != nil {
+		t.Fatalf("delete child after parent is gone: %v", err)
+	}
+}

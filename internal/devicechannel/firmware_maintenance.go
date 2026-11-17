@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
 	"github.com/ali96adil/StageCore/internal/deviceupdate"
 )
@@ -16,6 +17,7 @@ var (
 	ErrFirmwareMaintenanceOffline           = errors.New("firmware maintenance device offline")
 	ErrFirmwareMaintenanceProtocol          = errors.New("firmware maintenance requires stagecore.device/2")
 	ErrFirmwareMaintenanceCapabilityMissing = errors.New("firmware maintenance capability missing")
+	ErrFirmwareMaintenanceOutcomeUncertain  = errors.New("firmware maintenance outcome may have been committed")
 )
 
 type firmwareMaintenanceRequest struct {
@@ -75,6 +77,9 @@ func (r *Runtime) SendFirmwareMaintenance(
 
 	// Persist the exact connection binding before bytes leave the Hub. An
 	// immediate device response therefore cannot race an unpersisted SENT state.
+	if err := capability.CheckDispatch(ctx); err != nil {
+		return deviceupdate.UpdateRecord{}, err
+	}
 	sent, err := r.firmwareMaintenance.MarkSent(
 		ctx, record.Manifest.UpdateID, record.Manifest.DeviceID, generation,
 	)
@@ -89,16 +94,29 @@ func (r *Runtime) SendFirmwareMaintenance(
 		ConnectionGeneration: generation,
 		Update:               record.Manifest,
 	}
-	if err := current.send(request); err != nil {
+	if err := current.sendAuthorized(ctx, request); err != nil {
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
+		defer cancel()
 		failed, markErr := r.firmwareMaintenance.MarkTransportFailed(
-			ctx, record.Manifest.UpdateID, record.Manifest.DeviceID, generation, err.Error(),
+			cleanup, record.Manifest.UpdateID, record.Manifest.DeviceID, generation, err.Error(),
 		)
-		current.close()
+		if ctx.Err() == nil && !errors.Is(err, capability.ErrDispatchAuthorityRevoked) {
+			current.close()
+		}
 		if markErr == nil {
-			return failed, fmt.Errorf("send firmware maintenance request: %w", err)
+			if errors.Is(err, capability.ErrDispatchAuthorityRevoked) {
+				return failed, fmt.Errorf("send firmware maintenance request: %w", err)
+			}
+			return failed, fmt.Errorf("%w: send firmware maintenance request: %w", ErrFirmwareMaintenanceOutcomeUncertain, err)
+		}
+		if errors.Is(err, capability.ErrDispatchAuthorityRevoked) {
+			return deviceupdate.UpdateRecord{}, fmt.Errorf(
+				"send firmware maintenance request: %v; persist failure: %w", err, markErr,
+			)
 		}
 		return deviceupdate.UpdateRecord{}, fmt.Errorf(
-			"send firmware maintenance request: %v; persist failure: %w", err, markErr,
+			"%w: send firmware maintenance request: %v; persist failure: %w",
+			ErrFirmwareMaintenanceOutcomeUncertain, err, markErr,
 		)
 	}
 	return sent, nil
@@ -139,7 +157,6 @@ func (r *Runtime) deliverFirmwareMaintenanceResult(
 	)
 	return err == nil
 }
-
 
 func (r *Runtime) reconcileFirmwarePostReboot(
 	ctx context.Context,

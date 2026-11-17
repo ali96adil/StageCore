@@ -88,14 +88,14 @@ func (s *Store) ActiveSessionForProject(ctx context.Context, projectID string) (
 	var currentCue sql.NullString
 	err := s.db.QueryRowContext(ctx, `
 		SELECT session_id, project_id, runtime_snapshot_id, session_type, name,
-		       started_at_us, ended_at_us, status, current_cue_id
+		       started_at_us, ended_at_us, status, current_cue_id, rehearsal_purpose
 		FROM sessions
 		WHERE project_id = ? AND status = 'ACTIVE'
 		ORDER BY started_at_us DESC
 		LIMIT 1
 	`, projectID).Scan(
 		&session.ID, &session.ProjectID, &session.RuntimeSnapshotID, &sessionType,
-		&session.Name, &startedUS, &endedUS, &status, &currentCue,
+		&session.Name, &startedUS, &endedUS, &status, &currentCue, &session.RehearsalPurpose,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil

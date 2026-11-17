@@ -85,6 +85,25 @@ func TestOperatorExtensionLibraryRBACAndTrustBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	revoked := authenticatedMutationRequest(t, http.MethodPost, "/api/v1/extensions/register", viewerRegisterBody, owner.Token, owner.CSRFToken)
+	revoked.Body = &firmwareUploadRevokeReader{ReadCloser: revoked.Body, revoke: func() {
+		if err := h.auth.Logout(ctx, owner.Token); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	revokedResponse := httptest.NewRecorder()
+	handler.ServeHTTP(revokedResponse, revoked)
+	if revokedResponse.Code != http.StatusForbidden {
+		t.Fatalf("revoked registration status=%d body=%s", revokedResponse.Code, revokedResponse.Body.String())
+	}
+	items, err := library.List(ctx, "")
+	if err != nil || len(items) != 0 {
+		t.Fatalf("revoked registration committed: %v err=%v", items, err)
+	}
+	owner, err = h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
 	requestOwner := func(manifest []byte) *httptest.ResponseRecorder {
 		body, err := json.Marshal(map[string]any{"package_id": pkg.ID, "manifest": json.RawMessage(manifest)})
 		if err != nil {

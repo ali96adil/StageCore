@@ -5,12 +5,14 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/ali96adil/StageCore/internal/domain"
+	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/vault"
 )
 
@@ -183,5 +185,79 @@ func assertVerifiedStagingEmpty(t *testing.T, v *vault.Vault) {
 	}
 	if len(entries) != 0 {
 		t.Fatalf("verified import left staging files: %#v", entries)
+	}
+}
+
+func TestConcurrentVaultCleanupAndManagedImportPreservesReferencedBytes(t *testing.T) {
+	ctx := context.Background()
+	v, _, projectID := newVault(t)
+	for i := byte(0); i < 12; i++ {
+		payload := bytes.Repeat([]byte{i}, 128)
+		object, err := v.ImportObject(ctx, bytes.NewReader(payload))
+		if err != nil {
+			t.Fatal(err)
+		}
+		start := make(chan struct{})
+		results := make(chan error, 2)
+		go func() {
+			<-start
+			_, err := v.RemoveObjectIfUnreferenced(ctx, object.ContentHash)
+			results <- err
+		}()
+		go func() {
+			<-start
+			_, err := v.ImportManaged(ctx, vault.ImportParams{ProjectID: projectID, Name: "Concurrent media"}, bytes.NewReader(payload))
+			results <- err
+		}()
+		close(start)
+		first, second := <-results, <-results
+		if first != nil || second != nil {
+			t.Fatalf("concurrent import and cleanup: %v, %v", first, second)
+		}
+		f, _, err := v.OpenObject(ctx, object.ContentHash)
+		if err != nil {
+			t.Fatalf("managed import lost its Vault object: %v", err)
+		}
+		_ = f.Close()
+		if removed, err := v.RemoveObjectIfUnreferenced(ctx, object.ContentHash); err != nil || removed {
+			t.Fatalf("referenced content removed: %t, %v", removed, err)
+		}
+	}
+}
+
+func TestVaultRollbackPreservesObjectReferencedByAnotherProjectLegacySnapshot(t *testing.T) {
+	ctx := context.Background()
+	v, s, _ := newVault(t)
+	payload := []byte("shared legacy snapshot content")
+	object, err := v.ImportObject(ctx, bytes.NewReader(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, revision, err := s.CreateProject(ctx, store.CreateProjectParams{Name: "Other legacy project"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetRevisionStatus(ctx, revision.ID, domain.RevisionValidated); err != nil {
+		t.Fatal(err)
+	}
+	manifest := json.RawMessage(`{"media_requirements":[{"content_hash":"` + object.ContentHash + `"}]}`)
+	if _, err := s.CreateRuntimeSnapshot(ctx, revision.ID, "operator", sha256Hex(manifest), manifest); err != nil {
+		t.Fatal(err)
+	}
+	if removed, err := v.RemoveObjectIfUnreferenced(ctx, object.ContentHash); err != nil || removed {
+		t.Fatalf("cleanup removed another project's snapshot bytes: removed=%t err=%v", removed, err)
+	}
+	f, _, err := v.OpenObject(ctx, object.ContentHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+
+	unreferenced, err := v.ImportObject(ctx, bytes.NewReader([]byte("unreferenced rollback content")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed, err := v.RemoveObjectIfUnreferenced(ctx, unreferenced.ContentHash); err != nil || !removed {
+		t.Fatalf("unreferenced cleanup = %t err=%v", removed, err)
 	}
 }

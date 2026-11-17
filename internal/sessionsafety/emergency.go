@@ -241,16 +241,37 @@ func setTabletBlackout(
 	command contracts.CommandEnvelope,
 	enabled bool,
 ) (EmergencyDomainReport, error) {
+	commandType := deviceexperience.CommandTabletBlackout
+	if !enabled {
+		commandType = deviceexperience.CommandTabletBlackoutClear
+	}
+	return dispatchTabletSafeCommand(ctx, devices, dispatcher, session, command, commandType, "emergency-blackout")
+}
+
+func NewRehearsalTabletStop(devices emergencyDeviceRepository, dispatcher lightingDispatcher) func(context.Context, domain.Session, contracts.CommandEnvelope) error {
+	return func(ctx context.Context, session domain.Session, command contracts.CommandEnvelope) error {
+		if session.Type != domain.SessionRehearsal {
+			return fmt.Errorf("tablet STOP requires an active Rehearsal")
+		}
+		_, err := dispatchTabletSafeCommand(ctx, devices, dispatcher, session, command, deviceexperience.CommandTabletStop, "rehearsal-stop")
+		return err
+	}
+}
+
+func dispatchTabletSafeCommand(
+	ctx context.Context,
+	devices emergencyDeviceRepository,
+	dispatcher lightingDispatcher,
+	session domain.Session,
+	command contracts.CommandEnvelope,
+	commandType, idempotencyPrefix string,
+) (EmergencyDomainReport, error) {
 	report := EmergencyDomainReport{Domain: "TABLET", Status: "NOT_CONFIGURED"}
 	all, err := devices.ListDevices(ctx, session.ProjectID)
 	if err != nil {
 		report.Status = "FAILED"
 		report.Details = []string{err.Error()}
 		return report, err
-	}
-	commandType := deviceexperience.CommandTabletBlackout
-	if !enabled {
-		commandType = deviceexperience.CommandTabletBlackoutClear
 	}
 	capabilityKey := deviceexperience.RequiredCapability(commandType)
 	targets := make([]deviceexperience.Device, 0)
@@ -295,7 +316,7 @@ func setTabletBlackout(
 			CausationID: command.CommandID,
 			RuntimeSnapshotID: session.RuntimeSnapshotID,
 			Priority: "P0",
-			IdempotencyKey: "emergency-blackout:" + command.CommandID + ":" + commandType + ":" + device.ID,
+			IdempotencyKey: idempotencyPrefix + ":" + command.CommandID + ":" + commandType + ":" + device.ID,
 			Payload: json.RawMessage(`{}`),
 			DeadlineAt: &deadline,
 		})

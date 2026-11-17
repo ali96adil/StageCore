@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/extension"
 	"github.com/ali96adil/StageCore/internal/software"
@@ -145,5 +146,52 @@ func TestOperatorExtensionActivationStagingRBACReadinessAndNoExecution(t *testin
 	}
 	if len(stageEntries) != 0 {
 		t.Fatalf("HTTP activation staging left files: %v", stageEntries)
+	}
+}
+
+type staticExtensionActivationStager struct {
+	result extension.ActivationStagingResult
+}
+
+func (s staticExtensionActivationStager) Check(context.Context, string) (extension.ActivationStagingResult, error) {
+	return s.result, nil
+}
+
+func TestExtensionActivationStagingSuppressesResultAfterOwnerRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	revoked := false
+	handler := New(withOperatorExtensionActivationStaging(h.auth, staticExtensionActivationStager{
+		result: extension.ActivationStagingResult{
+			InstallationID: "installation-private", ExtensionID: "private.activation", Version: "1.2.3",
+			Status: "STAGED", RuntimePermissions: []string{"osc.send"}, ExecutionAuthorized: true,
+		},
+	}, nil, extensionActivationStagingHooks{BeforeResponse: func() {
+		revoked = true
+		if err := h.auth.Logout(ctx, owner.Token); err != nil {
+			t.Errorf("revoke Owner before activation staging response: %v", err)
+		}
+	}})).Handler()
+	request := authenticatedMutationRequest(t, http.MethodPost,
+		"/api/v1/extensions/installations/installation-private/activation-staging-check", nil, owner.Token, owner.CSRFToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if !revoked {
+		t.Fatal("test did not revoke Owner immediately before activation staging response")
+	}
+	var body map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusForbidden || body["error_code"] != capability.DispatchAuthorityRevokedCode ||
+		body["effect_may_have_been_committed"] != true || body["retryable"] != false {
+		t.Fatalf("revoked Owner received activation staging result or retryable response: HTTP %d %+v", response.Code, body)
+	}
+	if _, leaked := body["runtime_permissions"]; leaked {
+		t.Fatalf("revoked Owner received activation permissions after staging: %+v", body)
 	}
 }

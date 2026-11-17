@@ -44,6 +44,7 @@ func TestInjectTestRoutesToRealOSCAndPersistsTruthfulTrace(t *testing.T) {
 	pluginPath := buildRoutingOSCPlugin(t)
 	host := pluginhost.New(pluginPath, nil, nil, nil, oscManifest([]string{oscplugin.PermissionUDPSend}))
 	defer host.Close()
+	warmRoutingOSCPluginForTest(t, host)
 	registry := capability.NewRegistry()
 	if err := registry.Register(oscplugin.CapabilityOSCSend, oscplugin.New(host)); err != nil {
 		t.Fatal(err)
@@ -52,6 +53,9 @@ func TestInjectTestRoutesToRealOSCAndPersistsTruthfulTrace(t *testing.T) {
 	command := injectCommand(t, f, json.RawMessage(`1`))
 	result := engine.InjectTest(context.Background(), f.session.ID, command)
 	if result.Status != contracts.CommandCompleted {
+		if result.Error != nil {
+			t.Fatalf("status=%s error=%#v", result.Status, *result.Error)
+		}
 		t.Fatalf("result=%#v", result)
 	}
 
@@ -88,9 +92,9 @@ func TestInjectTestRoutesToRealOSCAndPersistsTruthfulTrace(t *testing.T) {
 
 func TestNonMatchingAndDisabledRoutesDispatchNothingButTrace(t *testing.T) {
 	for _, tc := range []struct {
-		name        string
-		condition   json.RawMessage
-		enabled     bool
+		name            string
+		condition       json.RawMessage
+		enabled         bool
 		wantDisposition string
 	}{
 		{name: "non-matching", condition: json.RawMessage(`{"operator":"equals","value":2}`), enabled: true, wantDisposition: "NOT_MATCHED"},
@@ -113,7 +117,9 @@ func TestNonMatchingAndDisabledRoutesDispatchNothingButTrace(t *testing.T) {
 			}
 			events, _ := f.store.ListEvents(context.Background(), f.session.ID)
 			assertRouteEventTypes(t, events, []string{"input.received", "route.evaluated"})
-			var payload struct{ Disposition string `json:"disposition"` }
+			var payload struct {
+				Disposition string `json:"disposition"`
+			}
 			if err := json.Unmarshal(events[1].Payload, &payload); err != nil {
 				t.Fatal(err)
 			}
@@ -135,6 +141,7 @@ func TestDebounceAndDuplicateCommandDoNotReplayOSC(t *testing.T) {
 	pluginPath := buildRoutingOSCPlugin(t)
 	host := pluginhost.New(pluginPath, nil, nil, nil, oscManifest([]string{oscplugin.PermissionUDPSend}))
 	defer host.Close()
+	warmRoutingOSCPluginForTest(t, host)
 	registry := capability.NewRegistry()
 	if err := registry.Register(oscplugin.CapabilityOSCSend, oscplugin.New(host)); err != nil {
 		t.Fatal(err)
@@ -176,7 +183,9 @@ func TestDebounceAndDuplicateCommandDoNotReplayOSC(t *testing.T) {
 		if event.EventType != "route.evaluated" {
 			continue
 		}
-		var payload struct{ Disposition string `json:"disposition"` }
+		var payload struct {
+			Disposition string `json:"disposition"`
+		}
 		_ = json.Unmarshal(event.Payload, &payload)
 		if payload.Disposition == "DEBOUNCED" {
 			debounced = true
@@ -244,6 +253,13 @@ func injectCommand(t *testing.T, f routeFixture, value json.RawMessage) contract
 
 func oscManifest(grants []string) pluginhost.Manifest {
 	return pluginhost.Manifest{PluginID: oscplugin.PluginID, CapabilityPermissions: map[string][]string{oscplugin.CapabilityOSCSend: {oscplugin.PermissionUDPSend}}, GrantedPermissions: grants}
+}
+
+func warmRoutingOSCPluginForTest(t *testing.T, host *pluginhost.Host) {
+	t.Helper()
+	if _, err := host.Probe(context.Background()); err != nil {
+		t.Fatalf("start OSC plugin outside the routing assertion: %v", err)
+	}
 }
 
 func buildRoutingOSCPlugin(t *testing.T) string {

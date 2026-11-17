@@ -11,29 +11,27 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/companionauth"
 	"github.com/ali96adil/StageCore/internal/deviceupdate"
 	"github.com/ali96adil/StageCore/internal/domain"
 )
 
 type fakeDeviceSessionValidator struct {
-	token     string
-	deviceID  string
+	token    string
+	deviceID string
+	active   func() bool
 }
 
 func (f fakeDeviceSessionValidator) ValidateRuntimeSession(_ context.Context, token string) (domain.CompanionRuntimeSession, error) {
-	if token != f.token {
-		return domain.CompanionRuntimeSession{}, &sessionTestError{}
+	if token != f.token || (f.active != nil && !f.active()) {
+		return domain.CompanionRuntimeSession{}, &companionauth.Error{Code: companionauth.CodeSessionInvalid}
 	}
 	return domain.CompanionRuntimeSession{ID: "session-1", CompanionID: f.deviceID}, nil
 }
 
-type sessionTestError struct{}
-
-func (*sessionTestError) Error() string { return "invalid test session" }
-
 func importHTTPTestArtifact(t *testing.T, registry *deviceupdate.ArtifactRegistry, deviceID string) (deviceupdate.ArtifactMetadata, []byte) {
 	t.Helper()
-	payload := []byte("qualified-stagelaser-firmware")
+	payload := bytes.Repeat([]byte("qualified-stagelaser-firmware"), 5000)
 	hash := sha256.Sum256(payload)
 	metadata := deviceupdate.ArtifactMetadata{
 		ArtifactID:       "018f2744-0cb0-7bf6-9637-4a3a467a7a21",
@@ -84,7 +82,7 @@ func TestStageDeviceFirmwareDownloadRequiresSessionAndExactDevice(t *testing.T) 
 		t.Fatalf("download status = %d body=%s", rec.Code, rec.Body.String())
 	}
 	if !bytes.Equal(rec.Body.Bytes(), payload) {
-		t.Fatalf("download body = %q", rec.Body.Bytes())
+		t.Fatalf("download body differs, got %d bytes", rec.Body.Len())
 	}
 	if got := rec.Header().Get("X-Content-SHA256"); got != metadata.SHA256 {
 		t.Fatalf("sha header = %q", got)
@@ -134,5 +132,32 @@ func TestStageDeviceFirmwareDownloadRejectsPlainNonLoopbackTransport(t *testing.
 	server.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusUpgradeRequired {
 		t.Fatalf("plain transport status = %d", rec.Code)
+	}
+}
+
+func TestStageDeviceFirmwareDownloadStopsOnSessionRevocation(t *testing.T) {
+	deviceID := "23c45a07-7286-4afc-91d9-7e54df72aeee"
+	registry, err := deviceupdate.NewArtifactRegistry(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata, payload := importHTTPTestArtifact(t, registry, deviceID)
+	active := true
+	server := New(WithStageDeviceFirmwareArtifacts(fakeDeviceSessionValidator{
+		token: "good-token", deviceID: deviceID, active: func() bool { return active },
+	}, registry))
+	req := httptest.NewRequest(http.MethodGet, "https://hub.local/api/v1/stage-device-firmware/artifacts/"+metadata.ArtifactID+"/firmware.bin", nil)
+	req.Header.Set("Authorization", "StageCoreSession good-token")
+	rec := &revokeOnMediaWrite{ResponseRecorder: httptest.NewRecorder(), revoke: func() { active = false }}
+	server.Handler().ServeHTTP(rec, req)
+	if got := rec.Body.Len(); rec.Code != http.StatusOK || got == 0 || got > 64<<10 || got >= len(payload) {
+		t.Fatalf("revocation failed to interrupt firmware transfer: HTTP %d, %d bytes", rec.Code, got)
+	}
+
+	retry := httptest.NewRecorder()
+	req.Header.Set("Range", "bytes=65536-")
+	server.Handler().ServeHTTP(retry, req)
+	if retry.Code != http.StatusGone {
+		t.Fatalf("revoked range request returned HTTP %d", retry.Code)
 	}
 }

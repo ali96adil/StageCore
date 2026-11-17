@@ -105,6 +105,9 @@ func TestCueGoStrongFailSoftContinuesFromUnavailableTabletToHealthyLighting(t *t
 	f := newFixture(t, []domain.Action{first, second})
 	calls := make([]string, 0, 2)
 	executor := capability.ExecutorFunc(func(_ context.Context, request capability.Request) capability.Result {
+		if request.SessionID != f.session.ID || request.ProjectID != f.session.ProjectID {
+			t.Fatalf("dispatch scope = %s / %s", request.ProjectID, request.SessionID)
+		}
 		calls = append(calls, request.Capability)
 		switch request.Capability {
 		case "tablet.media.play":

@@ -11,7 +11,9 @@ import (
 
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/executionenv"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/store"
+	"github.com/ali96adil/StageCore/internal/userauth"
 )
 
 func TestOperatorExecutionEnvironmentSnapshotDiffIsReadOnlyAndScoped(t *testing.T) {
@@ -39,19 +41,19 @@ func TestOperatorExecutionEnvironmentSnapshotDiffIsReadOnlyAndScoped(t *testing.
 
 	makeSnapshot := func(value float64) executionenv.Snapshot {
 		metadata, err := json.Marshal(map[string]any{
-			"path": "/fader",
+			"path":  "/fader",
 			"value": value,
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
 		return executionenv.Snapshot{
-			SchemaVersion:              executionenv.SnapshotSchemaVersion,
-			EnvironmentKey:             environment.Manifest.EnvironmentKey,
-			AdapterKey:                 environment.Manifest.AdapterKey,
-			SourceManifestSHA256:       environment.ContentSHA256,
-			CaptureStatus:              executionenv.SnapshotPartial,
-			RebuildPlanVersion:         executionenv.SnapshotRebuildPlanVersion,
+			SchemaVersion:             executionenv.SnapshotSchemaVersion,
+			EnvironmentKey:            environment.Manifest.EnvironmentKey,
+			AdapterKey:                environment.Manifest.AdapterKey,
+			SourceManifestSHA256:      environment.ContentSHA256,
+			CaptureStatus:             executionenv.SnapshotPartial,
+			RebuildPlanVersion:        executionenv.SnapshotRebuildPlanVersion,
 			ReconstructionFingerprint: strings.Repeat("c", 64),
 			RebuildPlan: []executionenv.SnapshotRebuildStep{{
 				Step:            1,
@@ -225,5 +227,64 @@ func TestOperatorExecutionEnvironmentSnapshotDiffIsReadOnlyAndScoped(t *testing.
 	handler.ServeHTTP(crossDetailRes, crossDetailReq)
 	if crossDetailRes.Code != http.StatusNotFound {
 		t.Fatalf("cross-environment detail status=%d body=%s", crossDetailRes.Code, crossDetailRes.Body.String())
+	}
+}
+
+func TestExecutionEnvironmentSnapshotListSuppressesStoreErrorAfterGrantRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	access, err := projectaccess.New(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	operator, err := h.auth.CreateUser(ctx, "snapshot-list-operator", h.password, userauth.RoleOperator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operatorLogin, err := h.auth.Login(ctx, operator.Username, h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, revision, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "Snapshot list ACL", CreatedBy: owner.Session.User.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	environment, err := stageStore.CreateExecutionEnvironmentManifest(
+		ctx, revision.ID, testVDMXExecutionEnvironmentManifest("snapshot-list"), owner.Session.User.ID,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := access.SetPermissions(ctx, owner.Session.User.ID, operator.ID, project.ID,
+		[]projectaccess.Permission{projectaccess.ProjectView, projectaccess.MediaRead}); err != nil {
+		t.Fatal(err)
+	}
+	handler := New(
+		withOperatorExecutionEnvironments(h.auth, stageStore, executionEnvironmentReadHooks{
+			BeforeStoreErrorResponse: func(route string) {
+				if route == "snapshot-list" {
+					if err := access.SetPermissions(ctx, owner.Session.User.ID, operator.ID, project.ID, nil); err != nil {
+						t.Errorf("revoke media.read before snapshot-list error delivery: %v", err)
+					}
+				}
+			},
+		}),
+		WithProjectRouteQualification(access),
+	).Handler()
+	if _, err := h.db.DB.ExecContext(ctx, "DROP TABLE execution_environment_snapshots"); err != nil {
+		t.Fatal(err)
+	}
+	path := "/api/v1/projects/" + project.ID + "/revisions/" + revision.ID +
+		"/execution-environments/" + environment.ID + "/snapshots"
+	req := authenticatedExecutionEnvironmentRequest(t, operatorLogin.Token, operatorLogin.CSRFToken, http.MethodGet, path, nil)
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusNotFound || strings.Contains(res.Body.String(), "EXECUTION_ENVIRONMENT_SNAPSHOTS_UNAVAILABLE") {
+		t.Fatalf("snapshot list error escaped after Project grant revocation: HTTP %d %s", res.Code, res.Body.String())
 	}
 }

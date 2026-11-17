@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/ali96adil/StageCore/internal/capability"
 	"strings"
 
 	"github.com/ali96adil/StageCore/internal/clock"
@@ -120,6 +121,9 @@ func (s *Store) DiscardProjectDraft(ctx context.Context, projectID, actor, reaso
 		return domain.ProjectRevision{}, false, domain.ErrConflict
 	}
 
+	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
+		return domain.ProjectRevision{}, false, err
+	}
 	if err := tx.Commit(); err != nil {
 		return domain.ProjectRevision{}, false, fmt.Errorf("commit discard draft: %w", err)
 	}

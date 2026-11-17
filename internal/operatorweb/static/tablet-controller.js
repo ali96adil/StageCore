@@ -18,6 +18,7 @@
       prepare: "PREPARE",
       play: "GO / PLAY",
       pause: "Pause",
+      pauseUnsupported: "Pause requires every selected tablet to advertise playback pause.",
       stop: "Stop",
       loopPlayback: "Loop",
       endBehavior: "When video ends",
@@ -121,6 +122,7 @@
       prepare: "تهيئة PREPARE",
       play: "GO / تشغيل",
       pause: "إيقاف مؤقت",
+      pauseUnsupported: "الإيقاف المؤقت يحتاج دعم الميزة من كل تابلت محدد.",
       stop: "إيقاف",
       loopPlayback: "تكرار Loop",
       endBehavior: "عند انتهاء الفيديو",
@@ -844,6 +846,11 @@
   async function dispatchTabletCommand(command, deviceIDs = null, payloadOverride = null) {
     const ids = deviceIDs || selectedDevices().map((device) => device.device_id);
     if (!ids.length) { setControllerMessage(t("chooseTablet"), "warn"); return; }
+    if (command === "TABLET_PAUSE" && ids.some((id) =>
+      !(model.devices || []).find((device) => device.device_id === id)?.capabilities?.includes("tablet.media.pause"))) {
+      setControllerMessage(t("pauseUnsupported"), "warn");
+      return;
+    }
     let payload;
     try { payload = payloadOverride || payloadFor(command); }
     catch (error) { setControllerMessage(error.message, "warn"); return; }

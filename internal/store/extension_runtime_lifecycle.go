@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ali96adil/StageCore/internal/clock"
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/domain"
 )
 
@@ -86,7 +87,7 @@ func (s *Store) SetExtensionRuntimeDesiredState(ctx context.Context, installatio
 		observedState = ExtensionRuntimeObservedStarting
 	}
 	now := s.clock.Now().UTC()
-	_, err := s.db.ExecContext(ctx, `
+	_, err := capability.ExecAuthorized(ctx, s.db, `
 		INSERT INTO extension_runtime_lifecycle (
 			installation_id, desired_state, observed_state, generation,
 			last_error_code, last_error_message, updated_by, updated_at_us, observed_at_us

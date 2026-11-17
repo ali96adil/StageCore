@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/ali96adil/StageCore/internal/storagehealth"
 	"github.com/ali96adil/StageCore/internal/store"
@@ -22,6 +23,7 @@ type Vault struct {
 	objectsRoot string
 	store       *store.Store
 	capacity    *storagehealth.Policy
+	objectMu    sync.Mutex // serializes promotion and rollback removal in this Vault
 }
 
 type Option func(*Vault)
@@ -86,6 +88,15 @@ func (v *Vault) Root() string {
 	return v.root
 }
 
+// CompanionScopeStore returns the authoritative media catalog used to fence
+// hash-addressed Companion Vault reads to an assigned Project or Snapshot.
+func (v *Vault) CompanionScopeStore() *store.Store {
+	if v == nil {
+		return nil
+	}
+	return v.store
+}
+
 func (v *Vault) StorageStatus() storagehealth.Status {
 	if v == nil {
 		return storagehealth.Status{State: storagehealth.Unavailable, Reason: "Vault is unavailable"}
@@ -130,6 +141,8 @@ func (v *Vault) ImportManaged(ctx context.Context, p ImportParams, r io.Reader) 
 	}
 
 	contentHash := hex.EncodeToString(hasher.Sum(nil))
+	v.objectMu.Lock()
+	defer v.objectMu.Unlock()
 	relativePath := objectRelativePath(contentHash)
 	objectPath := filepath.Join(v.root, filepath.FromSlash(relativePath))
 	if err := os.MkdirAll(filepath.Dir(objectPath), directoryMode); err != nil {

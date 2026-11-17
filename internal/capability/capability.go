@@ -19,6 +19,8 @@ type Target struct {
 }
 
 type Request struct {
+	CueID string
+	RequireApplicationACK bool
 	ExecutionID       string
 	ProjectID         string
 	SessionID         string
@@ -34,6 +36,8 @@ type Request struct {
 }
 
 type Result struct {
+	// DispatchNotAttempted permits a retry only when no output was sent.
+	DispatchNotAttempted bool
 	Result          domain.ExecutionResult
 	AckLevel        contracts.AckLevel
 	ResponseSummary string

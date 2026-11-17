@@ -138,3 +138,79 @@ func TestOperatorExtensionReadinessViewerAndIntegrityBoundary(t *testing.T) {
 		t.Fatalf("tampered readiness status=%d body=%s", tamperedRes.Code, tamperedRes.Body.String())
 	}
 }
+
+func TestOperatorExtensionReadinessSuppressesDataAfterSessionRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	objects, err := vault.Open(t.TempDir(), stageStore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := software.New(objects, stageStore, software.CurrentHubAPIVersion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg, err := repository.ImportPackage(ctx, software.ImportParams{
+		ProductID: "readiness.revocation-addon", Version: "1.0.0", Platform: runtime.GOOS, Architecture: runtime.GOARCH,
+		MinAPIVersion: 1, MaxAPIVersion: 1, OriginalFilename: "readiness-addon",
+		SigningStatus: store.SoftwareSigningUnknown, NotarizationStatus: store.SoftwareNotarizationUnknown,
+		ReleaseChannel: store.SoftwareChannelDevelopment,
+	}, strings.NewReader("readiness addon payload"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	library, err := extension.NewLibrary(stageStore, repository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest := []byte(`{
+		"schema_version":1,"extension_id":"readiness.revocation-addon","version":"1.0.0","kind":"ADDON","source":"LOCAL",
+		"name":{"en":"Readiness Addon","ar-IQ":"إضافة الجاهزية"},
+		"summary":{"en":"Tests response fencing.","ar-IQ":"تختبر حجب النتيجة بعد سحب الجلسة."},
+		"compatibility":{"api_min":1,"api_max":1,"platforms":["` + runtime.GOOS + `"],"architectures":["` + runtime.GOARCH + `"]}
+	}`)
+	if _, err := library.Register(ctx, pkg.ID, manifest, "owner"); err != nil {
+		t.Fatal(err)
+	}
+	installer, err := extension.NewInstaller(library, filepath.Join(t.TempDir(), "extensions"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	installed, err := installer.InstallPlanned(ctx, pkg.ID, "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reviewer, err := extension.NewPermissionReviewer(installer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assessor, err := extension.NewReadinessAssessor(installer, reviewer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	revoked := false
+	handler := New(withOperatorExtensionReadiness(h.auth, assessor, extensionReadinessHooks{
+		BeforeResponse: func() {
+			revoked = true
+			if err := h.auth.Logout(ctx, owner.Token); err != nil {
+				t.Errorf("revoke Owner before readiness response: %v", err)
+			}
+		},
+	})).Handler()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/extensions/installations/"+installed.InstallationID+"/readiness", nil)
+	request.RemoteAddr = "127.0.0.1:19404"
+	request.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: owner.Token})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if !revoked {
+		t.Fatal("test did not revoke Owner after readiness assessment")
+	}
+	if response.Code != http.StatusForbidden || strings.Contains(response.Body.String(), installed.InstallationID) || response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("revoked Owner received readiness data: status=%d headers=%v body=%s", response.Code, response.Header(), response.Body.String())
+	}
+}

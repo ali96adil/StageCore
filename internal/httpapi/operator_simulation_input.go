@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/simulationinput"
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
@@ -17,27 +18,52 @@ type simulationInputInjectRequest struct {
 }
 
 func WithOperatorSimulationInputs(auth *userauth.Service, inputs *simulationinput.Service) Option {
+	return withOperatorSimulationInputs(auth, inputs, simulationInputHooks{})
+}
+
+type simulationInputHooks struct {
+	BeforeResponse func()
+}
+
+func withOperatorSimulationInputs(auth *userauth.Service, inputs *simulationinput.Service, hooks simulationInputHooks) Option {
 	return func(s *Server) {
-		if auth == nil || inputs == nil { return }
-		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/simulation/inputs", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+		if auth == nil || inputs == nil {
+			return
+		}
+		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/simulation/inputs", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 			items, err := inputs.List(r.Context(), r.PathValue("project_id"))
 			if err != nil {
 				writeSimulationError(w, err)
+				return
+			}
+			if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
 				return
 			}
 			writeJSON(w, http.StatusOK, items)
 		}))
 		s.mux.HandleFunc("POST /api/v1/projects/{project_id}/simulation/inputs/inject", withPermission(auth, userauth.PermissionRuntimeControl, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 			var body simulationInputInjectRequest
-			if !decodeBoundedJSON(w, r, &body) { return }
-			result := inputs.Inject(r.Context(), simulationinput.InjectRequest{
-				ProjectID: r.PathValue("project_id"),
-				Issuer: session.User.ID,
-				RequestID: strings.TrimSpace(body.RequestID),
-				InputID: strings.TrimSpace(body.InputID),
-				Value: body.Value,
+			if !decodeBoundedJSON(w, r, &body) {
+				return
+			}
+			// JSON body reads can outlive the route's initial grant check.
+			if _, err := currentProjectRouteGrant(r); !writeProjectQualificationError(w, err) {
+				return
+			}
+			result := inputs.Inject(projectMutationContext(r, auth, session, userauth.PermissionRuntimeControl, nil, projectaccess.RehearsalControl), simulationinput.InjectRequest{
+				ProjectID:       r.PathValue("project_id"),
+				Issuer:          session.User.ID,
+				RequestID:       strings.TrimSpace(body.RequestID),
+				InputID:         strings.TrimSpace(body.InputID),
+				Value:           body.Value,
 				ConfirmCritical: body.ConfirmCritical,
 			})
+			if hooks.BeforeResponse != nil {
+				hooks.BeforeResponse()
+			}
+			if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionRuntimeControl, nil, projectaccess.RehearsalControl) {
+				return
+			}
 			writeRuntimeCommandResponse(w, http.StatusOK, result, map[string]any{"scope": "SIMULATION_ONLY", "source": "TEST"})
 		}))
 	}

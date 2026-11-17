@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -13,7 +14,15 @@ import (
 
 const testOfflineRevision = "0123456789abcdef0123456789abcdef01234567"
 
+func requireLinuxOfflineMedia(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS != "linux" {
+		t.Skip("offline media verification invokes the Linux-only installer")
+	}
+}
+
 func TestOfflineMediaVerifyAndRejectTamper(t *testing.T) {
+	requireLinuxOfflineMedia(t)
 	media := createTestOfflineMedia(t)
 
 	output, err := runOfflineMedia(t, media, nil, "verify")
@@ -38,6 +47,7 @@ func TestOfflineMediaVerifyAndRejectTamper(t *testing.T) {
 }
 
 func TestOfflineMediaRejectsBundleSymlink(t *testing.T) {
+	requireLinuxOfflineMedia(t)
 	media := createTestOfflineMedia(t)
 	link := filepath.Join(media, "bundles", "stagecore-linux-arm64", "unexpected-link")
 	if err := os.Symlink("stagecore", link); err != nil {

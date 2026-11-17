@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"github.com/ali96adil/StageCore/internal/capability"
 
 	"github.com/ali96adil/StageCore/internal/domain"
 )
@@ -21,6 +22,10 @@ func (s *Store) ReorderDraftCues(ctx context.Context, revisionID string, cueIDs 
 	}
 	defer tx.Rollback()
 	if err := s.ensureDraft(ctx, tx, revisionID); err != nil {
+		return nil, err
+	}
+	beforeHistory, err := readCueDraftStateTx(ctx, tx, revisionID, "")
+	if err != nil {
 		return nil, err
 	}
 
@@ -74,6 +79,16 @@ func (s *Store) ReorderDraftCues(ctx context.Context, revisionID string, cueIDs 
 			}
 			return nil, domain.ErrConflict
 		}
+	}
+	afterHistory, err := readCueDraftStateTx(ctx, tx, revisionID, "")
+	if err != nil {
+		return nil, err
+	}
+	if err := recordCueDraftHistoryTx(ctx, tx, revisionID, "REORDER", "", beforeHistory, afterHistory, cueDraftHistoryTimestamp(s.clock)); err != nil {
+		return nil, err
+	}
+	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
+		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("commit cue reorder: %w", err)

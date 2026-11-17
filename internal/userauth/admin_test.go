@@ -1,9 +1,12 @@
 package userauth
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
 	"testing"
+	"time"
 
 	"github.com/ali96adil/StageCore/internal/db"
 	"github.com/ali96adil/StageCore/internal/hubsecurity"
@@ -29,6 +32,107 @@ func TestSessionRenewalRotatesOldCredentialLocally(t *testing.T) {
 	if _, err := service.Validate(ctx, renewed.Token); err != nil {
 		t.Fatalf("renewed credential invalid: %v", err)
 	}
+}
+
+func TestSessionExpiredDuringForwardClockCorrectionCannotBeReusedAfterCorrection(t *testing.T) {
+	validators := []struct {
+		name string
+		call func(*Service, context.Context, string) error
+	}{
+		{name: "request", call: func(s *Service, ctx context.Context, token string) error {
+			_, err := s.Validate(ctx, token)
+			return err
+		}},
+		{name: "passive_stream", call: func(s *Service, ctx context.Context, token string) error {
+			_, err := s.ValidatePassive(ctx, token)
+			return err
+		}},
+	}
+	for _, validator := range validators {
+		t.Run(validator.name, func(t *testing.T) {
+			ctx := context.Background()
+			baseService, password := adminFixture(t)
+			now := time.Date(2026, 11, 14, 12, 0, 0, 0, time.UTC)
+			service, err := New(baseService.db,
+				WithClock(func() time.Time { return now }),
+				WithSessionTTL(time.Hour),
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			credential, err := service.Login(ctx, "owner", password, "127.0.0.1")
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			now = now.Add(2 * time.Hour)
+			if err := validator.call(service, ctx, credential.Token); !errors.Is(err, ErrSessionInvalid) {
+				t.Fatalf("forward-corrected expired session error=%v, want ErrSessionInvalid", err)
+			}
+			now = now.Add(-90 * time.Minute)
+			if _, err := service.Validate(ctx, credential.Token); !errors.Is(err, ErrSessionInvalid) {
+				t.Fatalf("expired session became valid after clock correction: %v", err)
+			}
+
+			corrected, err := service.Login(ctx, "owner", password, "127.0.0.1")
+			if err != nil {
+				t.Fatalf("Owner could not sign in locally after time correction: %v", err)
+			}
+			if _, err := service.Validate(ctx, corrected.Token); err != nil {
+				t.Fatalf("new post-correction session is invalid: %v", err)
+			}
+		})
+	}
+}
+
+func TestSessionRenewalRejectsCredentialExpiringDuringRotation(t *testing.T) {
+	ctx := context.Background()
+	baseService, password := adminFixture(t)
+	now := time.Date(2026, 11, 14, 12, 0, 0, 0, time.UTC)
+	clock := func() time.Time { return now }
+	initial, err := New(baseService.db, WithClock(clock), WithSessionTTL(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	credential, err := initial.Login(ctx, "owner", password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(59 * time.Minute)
+	reader := &clockAdvancingReader{
+		Reader:  bytes.NewReader(append(bytes.Repeat([]byte{0x11}, 32), bytes.Repeat([]byte{0x22}, 32)...)),
+		advance: func() { now = now.Add(2 * time.Hour) },
+	}
+	service, err := New(baseService.db,
+		WithClock(clock),
+		WithRandomSource(reader),
+		WithSessionTTL(time.Hour),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Renew(ctx, credential.Token); !errors.Is(err, ErrSessionInvalid) {
+		t.Fatalf("renewal accepted a credential that expired during token rotation: %v", err)
+	}
+
+	now = now.Add(-150 * time.Minute)
+	if _, err := service.Validate(ctx, credential.Token); !errors.Is(err, ErrSessionInvalid) {
+		t.Fatalf("session retired during renewal became valid after rollback: %v", err)
+	}
+}
+
+type clockAdvancingReader struct {
+	io.Reader
+	advance func()
+	used    bool
+}
+
+func (r *clockAdvancingReader) Read(p []byte) (int, error) {
+	if !r.used {
+		r.used = true
+		r.advance()
+	}
+	return r.Reader.Read(p)
 }
 
 func TestLastOwnerCannotBeDisabledOrDemoted(t *testing.T) {

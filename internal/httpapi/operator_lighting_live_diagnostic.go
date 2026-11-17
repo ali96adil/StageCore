@@ -18,12 +18,24 @@ type lightingLiveDiagnosticReader interface {
 
 var _ lightingLiveDiagnosticReader = (*livereconcile.BlockedDiagnosticReader)(nil)
 
+type lightingLiveDiagnosticHooks struct {
+	BeforeProjectReadError func()
+}
+
 // WithOperatorLightingLiveDiagnostics exposes a strictly read-only,
 // authenticated operator diagnostic for the experimental BLOCKED v2 node.
 // UNKNOWN is an ordinary diagnostic result, never an optimistic 200/READY.
 func WithOperatorLightingLiveDiagnostics(
 	auth *userauth.Service, stageStore *store.Store,
 	reader lightingLiveDiagnosticReader,
+) Option {
+	return withOperatorLightingLiveDiagnostics(auth, stageStore, reader, lightingLiveDiagnosticHooks{})
+}
+
+func withOperatorLightingLiveDiagnostics(
+	auth *userauth.Service, stageStore *store.Store,
+	reader lightingLiveDiagnosticReader,
+	hooks lightingLiveDiagnosticHooks,
 ) Option {
 	return func(s *Server) {
 		if s == nil || s.mux == nil || auth == nil || stageStore == nil || reader == nil {
@@ -32,7 +44,7 @@ func WithOperatorLightingLiveDiagnostics(
 		s.mux.HandleFunc(
 			"GET /api/v1/projects/{project_id}/lighting-controller/nodes/{device_id}/live-diagnostic",
 			withPermission(auth, userauth.PermissionProjectRead,
-				func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+				func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 					w.Header().Set("Cache-Control", "no-store")
 					projectID := strings.TrimSpace(r.PathValue("project_id"))
 					deviceID := strings.TrimSpace(r.PathValue("device_id"))
@@ -43,6 +55,12 @@ func WithOperatorLightingLiveDiagnostics(
 						return
 					}
 					if _, err := stageStore.GetProject(r.Context(), projectID); err != nil {
+						if hooks.BeforeProjectReadError != nil {
+							hooks.BeforeProjectReadError()
+						}
+						if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+							return
+						}
 						writeProjectStoreError(w, err)
 						return
 					}
@@ -63,30 +81,33 @@ func WithOperatorLightingLiveDiagnostics(
 					// them before a failing final-scope recheck.
 					if diagnostic.Status == livereconcile.SoftwareDiagnosticUnknown {
 						diagnostic = livereconcile.BlockedSoftwareDiagnostic{
-							Status: livereconcile.SoftwareDiagnosticUnknown,
-							Reason: diagnostic.Reason,
+							Status:           livereconcile.SoftwareDiagnosticUnknown,
+							Reason:           diagnostic.Reason,
 							PhysicalVerified: false, CommandsEnabled: false,
 						}
 					}
+					if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+						return
+					}
 					writeJSON(w, http.StatusOK, map[string]any{
 						"schema_version": 1,
-						"source": "SOFTWARE_ONLY",
-						"device_id": deviceID,
+						"source":         "SOFTWARE_ONLY",
+						"device_id":      deviceID,
 						"diagnostic": map[string]any{
-							"status": diagnostic.Status,
-							"reason": diagnostic.Reason,
-							"project_id": diagnostic.ProjectID,
-							"session_id": diagnostic.SessionID,
-							"snapshot_id": diagnostic.SnapshotID,
-							"cue_id": diagnostic.CueID,
-							"cue_execution_id": diagnostic.CueExecutionID,
-							"assignment_epoch": diagnostic.AssignmentEpoch,
-							"connection_generation": diagnostic.ConnectionGeneration,
-							"desired_slots": diagnostic.DesiredSlots,
-							"reported_slots": diagnostic.ReportedSlots,
-							"differing_slots": diagnostic.DifferingSlots,
+							"status":                   diagnostic.Status,
+							"reason":                   diagnostic.Reason,
+							"project_id":               diagnostic.ProjectID,
+							"session_id":               diagnostic.SessionID,
+							"snapshot_id":              diagnostic.SnapshotID,
+							"cue_id":                   diagnostic.CueID,
+							"cue_execution_id":         diagnostic.CueExecutionID,
+							"assignment_epoch":         diagnostic.AssignmentEpoch,
+							"connection_generation":    diagnostic.ConnectionGeneration,
+							"desired_slots":            diagnostic.DesiredSlots,
+							"reported_slots":           diagnostic.ReportedSlots,
+							"differing_slots":          diagnostic.DifferingSlots,
 							"physical_output_verified": false,
-							"commands_enabled": false,
+							"commands_enabled":         false,
 						},
 						"recovery_advice": advice,
 					})

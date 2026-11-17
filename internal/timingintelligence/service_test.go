@@ -2,10 +2,14 @@ package timingintelligence
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
+	"reflect"
 	"testing"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/db"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/snapshot"
@@ -14,11 +18,13 @@ import (
 
 type mutableClock struct{ now time.Time }
 
-func (c *mutableClock) Now() time.Time { return c.now.UTC() }
+func (c *mutableClock) Now() time.Time          { return c.now.UTC() }
 func (c *mutableClock) Advance(d time.Duration) { c.now = c.now.Add(d) }
 
 type timingFixture struct {
 	store     *store.Store
+	handle    *db.Handle
+	dataRoot  string
 	clock     *mutableClock
 	projectID string
 	snapshot  domain.RuntimeSnapshot
@@ -29,7 +35,8 @@ func newTimingFixture(t *testing.T) timingFixture {
 	t.Helper()
 	ctx := context.Background()
 	stageClock := &mutableClock{now: time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)}
-	handle, err := db.Open(ctx, db.Config{DataRoot: t.TempDir()})
+	dataRoot := t.TempDir()
+	handle, err := db.Open(ctx, db.Config{DataRoot: dataRoot})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +64,7 @@ func newTimingFixture(t *testing.T) timingFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return timingFixture{store: stageStore, clock: stageClock, projectID: project.ID, snapshot: runtimeSnapshot, cues: cues}
+	return timingFixture{store: stageStore, handle: handle, dataRoot: dataRoot, clock: stageClock, projectID: project.ID, snapshot: runtimeSnapshot, cues: cues}
 }
 
 func (f timingFixture) rehearsal(t *testing.T, name string, firstToSecond, secondToThird time.Duration, partial bool) domain.Session {
@@ -118,8 +125,8 @@ func TestReportUsesTrustedSequentialIntervalsAndPartialRehearsals(t *testing.T) 
 	service := New(fixture.store, fixture.clock)
 	report, err := service.Report(context.Background(), fixture.projectID, ReportOptions{
 		RuntimeSnapshotID: fixture.snapshot.ID,
-		SectionFromCueID: fixture.cues[0].ID,
-		SectionToCueID: fixture.cues[2].ID,
+		SectionFromCueID:  fixture.cues[0].ID,
+		SectionToCueID:    fixture.cues[2].ID,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -141,8 +148,8 @@ func TestReportUsesTrustedSequentialIntervalsAndPartialRehearsals(t *testing.T) 
 	if report.Section == nil || report.Section.Statistics.SampleCount != 2 {
 		t.Fatalf("section=%+v", report.Section)
 	}
-	if report.Section.Statistics.MedianUS != (105*time.Second).Microseconds() {
-		t.Fatalf("section median=%d want %d", report.Section.Statistics.MedianUS, (105*time.Second).Microseconds())
+	if report.Section.Statistics.MedianUS != (105 * time.Second).Microseconds() {
+		t.Fatalf("section median=%d want %d", report.Section.Statistics.MedianUS, (105 * time.Second).Microseconds())
 	}
 	candidate := findCandidate(t, report, partial.ID)
 	if !candidate.Effective || candidate.LifecycleState != domain.SessionLifecycleStopped {
@@ -284,4 +291,387 @@ func findCandidate(t *testing.T, report Report, sessionID string) SessionCandida
 	}
 	t.Fatalf("candidate %s not found", sessionID)
 	return SessionCandidate{}
+}
+
+func TestTimingCapturePausePreservesRawEventsAndReanchorsTraining(t *testing.T) {
+	f := newTimingFixture(t)
+	ctx := context.Background()
+	service := New(f.store, f.clock)
+	rehearsal, err := f.store.CreateSessionAtPosition(ctx, store.CreateSessionFoundationParams{
+		SnapshotID: f.snapshot.ID, SessionType: domain.SessionRehearsal, Name: "Pause rehearsal",
+		StartPosition: domain.SessionStartPosition{Version: 1, Kind: domain.SessionStartBeginning, Metadata: json.RawMessage(`{}`)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	set := func(paused bool) {
+		t.Helper()
+		if err := service.SetTimingCapturePaused(ctx, f.projectID, rehearsal.ID, "operator", paused); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.executeCue(t, rehearsal.ID, f.cues[0].ID)
+	set(true)
+	set(true)
+	f.clock.Advance(15 * time.Second)
+	f.executeCue(t, rehearsal.ID, f.cues[1].ID)
+	set(false)
+	f.clock.Advance(20 * time.Second)
+	f.executeCue(t, rehearsal.ID, f.cues[2].ID)
+	f.clock.Advance(time.Second)
+	f.executeCue(t, rehearsal.ID, f.cues[0].ID)
+	f.clock.Advance(2 * time.Second)
+	f.executeCue(t, rehearsal.ID, f.cues[1].ID)
+	if err := f.store.EndSessionLifecycle(ctx, rehearsal.ID, domain.SessionLifecycleCompleted, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.SetTimingCapturePaused(ctx, f.projectID, rehearsal.ID, "operator", true); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("ended session accepted mutation: %v", err)
+	}
+	records, err := f.store.ListTimingObservationRecords(ctx, f.projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 5 || records[0].TrainingExcluded || !records[1].TrainingExcluded || !records[2].TrainingExcluded || records[3].TrainingExcluded || records[4].TrainingExcluded {
+		t.Fatalf("unexpected retained observations: %+v", records)
+	}
+	report, err := service.Report(ctx, f.projectID, ReportOptions{RuntimeSnapshotID: f.snapshot.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Transitions) != 1 || report.Transitions[0].Statistics.SampleCount != 1 || report.Transitions[0].Statistics.MedianUS != int64(2*time.Second/time.Microsecond) {
+		t.Fatalf("training used interrupted observations: %+v", report.Transitions)
+	}
+	events, err := f.store.ListEvents(ctx, rehearsal.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, event := range events {
+		if event.EventType == "timing.capture_paused" || event.EventType == "timing.capture_resumed" {
+			count++
+		}
+	}
+	if count != 2 {
+		t.Fatalf("expected two journal changes, got %d", count)
+	}
+}
+
+func TestTimingCapturePauseSurvivesRestartClockJumpAndKeepsGOAvailable(t *testing.T) {
+	f := newTimingFixture(t)
+	ctx := context.Background()
+	service := New(f.store, f.clock)
+	session, err := f.store.CreateSessionAtPosition(ctx, store.CreateSessionFoundationParams{
+		SnapshotID: f.snapshot.ID, SessionType: domain.SessionRehearsal, Name: "Restart pause rehearsal",
+		StartPosition: domain.SessionStartPosition{Version: 1, Kind: domain.SessionStartBeginning, Metadata: json.RawMessage(`{}`)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.executeCue(t, session.ID, f.cues[0].ID)
+	if err := service.SetTimingCapturePaused(ctx, f.projectID, session.ID, "operator", true); err != nil {
+		t.Fatal(err)
+	}
+	f.clock.Advance(15 * time.Second)
+	f.executeCue(t, session.ID, f.cues[1].ID)
+
+	if err := f.handle.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := db.Open(ctx, db.Config{DataRoot: f.dataRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	f.handle = reopened
+	f.store = store.New(reopened.DB, f.clock)
+	service = New(f.store, f.clock)
+	paused, err := f.store.TimingCapturePausedSessions(ctx, f.projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !paused[session.ID] {
+		t.Fatal("paused capture state was lost after SQLite reopen")
+	}
+	// A duplicate request after restart must remain idempotent.
+	if err := service.SetTimingCapturePaused(ctx, f.projectID, session.ID, "operator", true); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate a wall-clock correction while paused. The event journal, not
+	// timestamp ordering, remains authoritative for pause state.
+	f.clock.Advance(-time.Hour)
+	f.executeCue(t, session.ID, f.cues[2].ID) // GO continues while capture is paused.
+	if err := service.SetTimingCapturePaused(ctx, f.projectID, session.ID, "operator", false); err != nil {
+		t.Fatal(err)
+	}
+	f.executeCue(t, session.ID, f.cues[0].ID)
+	f.clock.Advance(2 * time.Second)
+	f.executeCue(t, session.ID, f.cues[1].ID)
+	if err := f.store.EndSessionLifecycle(ctx, session.ID, domain.SessionLifecycleCompleted, "test"); err != nil {
+		t.Fatal(err)
+	}
+
+	paused, err = f.store.TimingCapturePausedSessions(ctx, f.projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if paused[session.ID] {
+		t.Fatal("resume state did not survive the persisted journal")
+	}
+	records, err := f.store.ListTimingObservationRecords(ctx, f.projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 5 || records[0].TrainingExcluded || !records[1].TrainingExcluded ||
+		!records[2].TrainingExcluded || !records[3].TrainingExcluded || records[4].TrainingExcluded {
+		t.Fatalf("pause/restart/correction contaminated raw or training observations: %+v", records)
+	}
+	report, err := service.Report(ctx, f.projectID, ReportOptions{RuntimeSnapshotID: f.snapshot.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := findTransition(t, report, f.cues[0].ID, f.cues[1].ID); got.SampleCount != 1 || got.MedianUS != int64(2*time.Second/time.Microsecond) {
+		t.Fatalf("training did not reanchor after resume and clock correction: %+v", got)
+	}
+	events, err := f.store.ListEvents(ctx, session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pauseChanges := 0
+	for _, event := range events {
+		if event.EventType == "timing.capture_paused" || event.EventType == "timing.capture_resumed" {
+			pauseChanges++
+		}
+	}
+	if pauseChanges != 2 {
+		t.Fatalf("duplicate pause request created journal changes: got %d, want 2", pauseChanges)
+	}
+}
+
+func TestRetrospectiveTimingSegmentsAreScopedOverlappingAndReversible(t *testing.T) {
+	f := newTimingFixture(t)
+	ctx := context.Background()
+	first := f.rehearsal(t, "First", time.Minute, 40*time.Second, false)
+	second := f.rehearsal(t, "Second", 80*time.Second, 50*time.Second, false)
+	service := New(f.store, f.clock)
+	options := ReportOptions{
+		RuntimeSnapshotID: f.snapshot.ID, ReviewSessionID: first.ID,
+		SectionFromCueID: f.cues[0].ID, SectionToCueID: f.cues[2].ID,
+	}
+	report := func() Report {
+		t.Helper()
+		got, err := service.Report(ctx, f.projectID, options)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	initial := report()
+	if len(initial.SegmentReview.Points) != 3 || initial.Section.Statistics.SampleCount != 2 {
+		t.Fatalf("initial=%+v review=%+v", initial, initial.SegmentReview)
+	}
+	points := initial.SegmentReview.Points
+	set := func(sessionID string, segment store.TimingSegment) error {
+		return service.SetTimingSegment(ctx, f.projectID, sessionID, "operator", segment)
+	}
+	single := store.TimingSegment{First: points[1].Sequence, Last: points[1].Sequence, Excluded: true}
+	span := store.TimingSegment{First: points[1].Sequence, Last: points[2].Sequence, Excluded: true}
+	if err := set(second.ID, single); !errors.Is(err, domain.ErrInvalidInput) {
+		t.Fatalf("foreign session accepted boundaries: %v", err)
+	}
+	if err := service.SetTimingSegment(ctx, "foreign-project", first.ID, "operator", single); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("foreign project accepted segment: %v", err)
+	}
+	for _, segment := range []store.TimingSegment{single, span, span} {
+		if err := set(first.ID, segment); err != nil {
+			t.Fatal(err)
+		}
+	}
+	single.Excluded = false
+	if err := set(first.ID, single); err != nil {
+		t.Fatal(err)
+	}
+	masked := report()
+	if len(masked.SegmentReview.Excluded) != 1 || len(masked.SegmentReview.Points) != 3 ||
+		masked.Section.Statistics.SampleCount != 1 ||
+		findTransition(t, masked, f.cues[0].ID, f.cues[1].ID).MedianUS != (80*time.Second).Microseconds() {
+		t.Fatalf("masked=%+v review=%+v", masked, masked.SegmentReview)
+	}
+	span.Excluded = false
+	if err := set(first.ID, span); err != nil {
+		t.Fatal(err)
+	}
+	restored := report()
+	if len(restored.SegmentReview.Excluded) != 0 || restored.Section.Statistics.SampleCount != 2 {
+		t.Fatalf("restored=%+v review=%+v", restored, restored.SegmentReview)
+	}
+	if _, err := f.store.CreateSessionAtPosition(ctx, store.CreateSessionFoundationParams{
+		SnapshotID: f.snapshot.ID, SessionType: domain.SessionShow, Name: "Live Show",
+		StartPosition: domain.SessionStartPosition{Version: 1, Kind: domain.SessionStartBeginning, Metadata: json.RawMessage(`{}`)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	span.Excluded = true
+	if err := set(first.ID, span); !errors.Is(err, domain.ErrShowConfigurationLocked) {
+		t.Fatalf("live SHOW allowed segment edits: %v", err)
+	}
+
+}
+
+func TestNewRehearsalTimingRequiresReversibleApproval(t *testing.T) {
+	f := newTimingFixture(t)
+	ctx := context.Background()
+	service := New(f.store, f.clock)
+	f.rehearsal(t, "Legacy automatic", time.Minute, 0, true)
+
+	start := func(purpose domain.RehearsalPurpose, interval time.Duration) domain.Session {
+		t.Helper()
+		session, err := f.store.CreateSessionWithPurpose(ctx, f.snapshot.ID, domain.SessionRehearsal, string(purpose), purpose)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.executeCue(t, session.ID, f.cues[0].ID)
+		f.clock.Advance(interval)
+		f.executeCue(t, session.ID, f.cues[1].ID)
+		return session
+	}
+	end := func(sessionID string) {
+		t.Helper()
+		if err := f.store.EndSessionLifecycle(ctx, sessionID, domain.SessionLifecycleStopped, "test"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	report := func(sessionID string, wantCount int, effective bool) SessionCandidate {
+		t.Helper()
+		got, err := service.Report(ctx, f.projectID, ReportOptions{RuntimeSnapshotID: f.snapshot.ID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		stats := findTransition(t, got, f.cues[0].ID, f.cues[1].ID)
+		candidate := findCandidate(t, got, sessionID)
+		if stats.SampleCount != wantCount || candidate.Effective != effective || candidate.ObservationCount != 2 {
+			t.Fatalf("candidate=%+v statistics=%+v", candidate, stats)
+		}
+		return candidate
+	}
+	selectMode := func(sessionID string, mode store.TimingSelectionMode) {
+		t.Helper()
+		if _, err := service.SetSessionSelection(ctx, f.projectID, sessionID, mode, "operator"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	preview := start(domain.RehearsalPreview, 75*time.Second)
+	end(preview.ID)
+	report(preview.ID, 1, false)
+
+	capture := start(domain.RehearsalTimingCapture, 80*time.Second)
+	rawBeforeApproval, err := f.store.ListTimingObservationRecords(ctx, f.projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selectMode(capture.ID, store.TimingSelectionInclude)
+	pending := report(capture.ID, 1, false)
+	if pending.SelectionMode != store.TimingSelectionInclude || pending.Reason != "approved, pending completed or stopped rehearsal" {
+		t.Fatalf("active approval=%+v", pending)
+	}
+	selectMode(capture.ID, store.TimingSelectionInclude)
+	report(capture.ID, 1, false)
+	end(capture.ID)
+	report(capture.ID, 2, true)
+	selectMode(capture.ID, store.TimingSelectionAuto)
+	report(capture.ID, 1, false)
+	selectMode(preview.ID, store.TimingSelectionInclude)
+	report(preview.ID, 2, true)
+	selectMode(preview.ID, store.TimingSelectionExclude)
+	report(preview.ID, 1, false)
+	rawAfterApproval, err := f.store.ListTimingObservationRecords(ctx, f.projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(rawBeforeApproval, rawAfterApproval) {
+		t.Fatalf("approval or revocation changed raw observations: before=%+v after=%+v", rawBeforeApproval, rawAfterApproval)
+	}
+}
+
+func TestTimingMutationsRollBackAfterCommitAuthorityEnds(t *testing.T) {
+	f := newTimingFixture(t)
+	ctx := context.Background()
+	finished := f.rehearsal(t, "Finished rehearsal", time.Minute, time.Minute, false)
+	active, err := f.store.CreateSession(ctx, f.snapshot.ID, domain.SessionRehearsal, "Active rehearsal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := New(f.store, f.clock)
+	report, err := service.Report(ctx, f.projectID, ReportOptions{
+		RuntimeSnapshotID: f.snapshot.ID, ReviewSessionID: finished.ID,
+		SectionFromCueID: f.cues[0].ID, SectionToCueID: f.cues[2].ID,
+	})
+	if err != nil || len(report.SegmentReview.Points) == 0 {
+		t.Fatalf("timing observations=%+v err=%v", report.SegmentReview, err)
+	}
+	point := report.SegmentReview.Points[0].Sequence
+	denied := errors.New("timing authority ended at commit")
+	guarded := capability.WithWriteAuthorization(ctx, func(context.Context, *sql.Tx) error {
+		return denied
+	})
+	if _, err := service.SetSessionSelection(guarded, f.projectID, finished.ID, store.TimingSelectionExclude, "operator"); !errors.Is(err, denied) {
+		t.Fatalf("selection err=%v", err)
+	}
+	if err := service.SetTimingCapturePaused(guarded, f.projectID, active.ID, "operator", true); !errors.Is(err, denied) {
+		t.Fatalf("pause err=%v", err)
+	}
+	segment := store.TimingSegment{First: point, Last: point, Excluded: true}
+	if err := service.SetTimingSegment(guarded, f.projectID, finished.ID, "operator", segment); !errors.Is(err, denied) {
+		t.Fatalf("segment err=%v", err)
+	}
+	selections, err := f.store.ListTimingSessionSelections(ctx, f.projectID)
+	if err != nil || len(selections) != 0 {
+		t.Fatalf("denied selections persisted: %v err=%v", selections, err)
+	}
+	paused, err := f.store.TimingCapturePausedSessions(ctx, f.projectID)
+	if err != nil || paused[active.ID] {
+		t.Fatalf("denied pause persisted: %v err=%v", paused, err)
+	}
+	segments, err := f.store.ListTimingSegments(ctx, f.projectID)
+	if err != nil || len(segments[finished.ID]) != 0 {
+		t.Fatalf("denied segments persisted: %v err=%v", segments, err)
+	}
+}
+
+func TestTimingApprovalRejectsConcurrentSelectionAndWrongSnapshot(t *testing.T) {
+	f := newTimingFixture(t)
+	ctx := context.Background()
+	session := f.rehearsal(t, "Review race", time.Minute, time.Minute, false)
+	service := New(f.store, f.clock)
+	wrong := store.WithTimingSelectionReview(ctx, store.TimingSelectionReview{
+		RuntimeSnapshotID: "other-snapshot", Mode: store.TimingSelectionAuto,
+	})
+	if _, err := service.SetSessionSelection(wrong, f.projectID, session.ID, store.TimingSelectionInclude, "reviewer"); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("wrong snapshot err=%v", err)
+	}
+	reviewed := store.WithTimingSelectionReview(ctx, store.TimingSelectionReview{
+		RuntimeSnapshotID: f.snapshot.ID, Mode: store.TimingSelectionAuto,
+	})
+	results := make(chan error, 2)
+	for _, mode := range []store.TimingSelectionMode{store.TimingSelectionInclude, store.TimingSelectionExclude} {
+		go func() {
+			_, err := service.SetSessionSelection(reviewed, f.projectID, session.ID, mode, "reviewer")
+			results <- err
+		}()
+	}
+	var succeeded, conflicted int
+	for range 2 {
+		switch err := <-results; {
+		case err == nil:
+			succeeded++
+		case errors.Is(err, domain.ErrConflict):
+			conflicted++
+		default:
+			t.Fatal(err)
+		}
+	}
+	if succeeded != 1 || conflicted != 1 {
+		t.Fatalf("successful=%d conflicted=%d", succeeded, conflicted)
+	}
 }

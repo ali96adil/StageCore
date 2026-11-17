@@ -2,12 +2,14 @@ package extension
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/db"
 	"github.com/ali96adil/StageCore/internal/software"
@@ -54,6 +56,24 @@ func TestInstallerStagesVerifiesPersistsAndReopens(t *testing.T) {
 	installer, err := NewInstaller(library, installRoot)
 	if err != nil {
 		t.Fatal(err)
+	}
+	denied := capability.WithWriteAuthorization(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		var count int
+		if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM extension_installations").Scan(&count); err != nil || count != 1 {
+			t.Fatalf("installation did not reach the guarded transaction: %d, %v", count, err)
+		}
+		return capability.ErrDispatchAuthorityRevoked
+	})
+	if _, err := installer.Install(denied, pkg.ID, "owner"); !errors.Is(err, capability.ErrDispatchAuthorityRevoked) {
+		t.Fatalf("revoked install returned %v", err)
+	}
+	items, err := stageStore.ListExtensionInstallations(ctx, "example.osc-plugin")
+	if err != nil || len(items) != 0 {
+		t.Fatalf("revoked install changed registry: %+v, %v", items, err)
+	}
+	unpublished := filepath.Join(installer.installedRoot, "example.osc-plugin", "1.2.3", pkg.ID, installedPayloadName)
+	if _, err := os.Lstat(unpublished); !os.IsNotExist(err) {
+		t.Fatalf("revoked install left a payload: %v", err)
 	}
 	installed, err := installer.Install(ctx, pkg.ID, "owner")
 	if err != nil {

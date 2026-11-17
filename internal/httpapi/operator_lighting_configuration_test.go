@@ -6,15 +6,270 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/lightingnode"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/snapshot"
 	"github.com/ali96adil/StageCore/internal/store"
 )
+
+type lightingConfigurationACLFixture struct {
+	access   projectAccessAPIFixture
+	devices  *deviceexperience.Repository
+	deviceID string
+	config   lightingnode.Configuration
+	body     []byte
+}
+
+func setupLightingConfigurationACLFixture(t *testing.T) lightingConfigurationACLFixture {
+	t.Helper()
+	f := setupProjectAccessAPI(t)
+	ctx := context.Background()
+	devices, err := deviceexperience.NewRepository(f.h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const deviceID = "lighting-config-revoke"
+	if _, err := devices.UpsertDevice(ctx, deviceexperience.Device{
+		ID: deviceID, ProjectID: f.projectID, ProfileID: lightingnode.ProfileID,
+		Kind: deviceexperience.DeviceGeneric, DisplayName: "Private lighting",
+		ProtocolVersion: deviceexperience.ProtocolVersion1,
+		Capabilities:    lightingnode.CapabilityKeys(), Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.access.SetPermissions(ctx, f.owner.Session.User.ID, f.operatorID, f.projectID,
+		[]projectaccess.Permission{projectaccess.ProjectView, projectaccess.DeviceConfigure}); err != nil {
+		t.Fatal(err)
+	}
+	config := lightingnode.Configuration{SchemaVersion: 1, Channels: []lightingnode.ChannelConfig{
+		{ChannelKey: "warm_a", ChannelNumber: 1, DisplayName: "Front Warm", Kind: lightingnode.ChannelWarmWhite, MinimumLevel: 0, MaximumLevel: 80, Enabled: true},
+	}}
+	body, err := json.Marshal(lightingConfigurationRequest{
+		Configuration: config,
+		Aliases:       map[string]string{"front_warm": "warm_a"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return lightingConfigurationACLFixture{access: f, devices: devices, deviceID: deviceID, config: config, body: body}
+}
+
+func TestLightingConfigurationDoesNotCommitAfterProjectGrantRevocation(t *testing.T) {
+	f := setupLightingConfigurationACLFixture(t)
+	ctx := context.Background()
+	option := Option(func(server *Server) {
+		registerOperatorLightingConfigurationRoutes(server.mux, f.access.h.auth, f.devices, f.access.projects, lightingConfigurationHooks{
+			BeforeMutation: func() {
+				if err := f.access.access.SetPermissions(ctx, f.access.owner.Session.User.ID, f.access.operatorID, f.access.projectID, nil); err != nil {
+					t.Errorf("revoke DeviceConfigure before mutation: %v", err)
+				}
+			},
+		})
+	})
+	handler := New(option, WithProjectRouteQualification(f.access.access)).Handler()
+	request := authenticatedMutationRequest(t, http.MethodPut,
+		"/api/v1/projects/"+f.access.projectID+"/lighting-controller/configuration/"+f.deviceID,
+		f.body, f.access.operator.Token, f.access.operator.CSRFToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("revoked Operator mutation status=%d body=%s", response.Code, response.Body.String())
+	}
+	project, err := f.access.projects.GetProject(ctx, f.access.projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindings, err := f.access.projects.ListLightingNodeBindings(ctx, project.CurrentRevisionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bindings) != 0 {
+		t.Fatalf("lighting configuration committed after DeviceConfigure was revoked: %+v", bindings)
+	}
+}
+
+func TestLightingConfigurationSuppressesReadErrorAfterProjectGrantRevocation(t *testing.T) {
+	f := setupLightingConfigurationACLFixture(t)
+	ctx := context.Background()
+	if _, err := f.access.h.db.DB.ExecContext(ctx, `DROP TABLE stage_devices`); err != nil {
+		t.Fatal(err)
+	}
+	option := Option(func(server *Server) {
+		registerOperatorLightingConfigurationRoutes(server.mux, f.access.h.auth, f.devices, f.access.projects, lightingConfigurationHooks{
+			BeforeErrorResponse: func() {
+				if err := f.access.access.SetPermissions(ctx, f.access.owner.Session.User.ID, f.access.operatorID, f.access.projectID, nil); err != nil {
+					t.Errorf("revoke Project grant before lighting read error delivery: %v", err)
+				}
+			},
+		})
+	})
+	handler := New(option, WithProjectRouteQualification(f.access.access)).Handler()
+	request := authenticatedReadRequest(http.MethodGet,
+		"/api/v1/projects/"+f.access.projectID+"/lighting-controller/configuration", f.access.operator.Token)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusNotFound || !strings.Contains(response.Body.String(), `"error_code":"PROJECT_NOT_FOUND"`) ||
+		strings.Contains(response.Body.String(), "LIGHTING_BINDINGS_UNAVAILABLE") ||
+		strings.Contains(response.Body.String(), "lighting_node_revision_bindings") ||
+		response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("revoked Operator received lighting read failure after grant revocation: HTTP %d headers=%v body=%s",
+			response.Code, response.Header(), response.Body.String())
+	}
+}
+
+func TestLightingConfigurationReportsDraftForkAfterGrantRevocationBeforeBindingWrite(t *testing.T) {
+	for _, method := range []string{http.MethodPut, http.MethodDelete} {
+		t.Run(method, func(t *testing.T) {
+			f := setupLightingConfigurationACLFixture(t)
+			ctx := context.Background()
+			project, err := f.access.projects.GetProject(ctx, f.access.projectID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			prior := f.config
+			prior.Channels = append([]lightingnode.ChannelConfig(nil), f.config.Channels...)
+			prior.Channels[0].MaximumLevel = 40
+			if _, err := f.access.projects.SetLightingNodeBinding(ctx, project.CurrentRevisionID, lightingnode.ProjectBinding{
+				DeviceID: f.deviceID, ProfileID: lightingnode.ProfileID, Configuration: prior,
+				Aliases: map[string]string{"front_warm": "warm_a"},
+			}, f.access.owner.Session.User.ID); err != nil {
+				t.Fatal(err)
+			}
+			if err := f.access.projects.SetRevisionStatus(ctx, project.CurrentRevisionID, domain.RevisionValidated); err != nil {
+				t.Fatal(err)
+			}
+			option := Option(func(server *Server) {
+				registerOperatorLightingConfigurationRoutes(server.mux, f.access.h.auth, f.devices, f.access.projects, lightingConfigurationHooks{
+					BeforeBindingWrite: func() {
+						if err := f.access.access.SetPermissions(ctx, f.access.owner.Session.User.ID, f.access.operatorID, f.access.projectID, nil); err != nil {
+							t.Errorf("revoke DeviceConfigure before binding write: %v", err)
+						}
+					},
+				})
+			})
+			handler := New(option, WithProjectRouteQualification(f.access.access)).Handler()
+			path := "/api/v1/projects/" + f.access.projectID + "/lighting-controller/configuration/" + f.deviceID
+			var body []byte
+			if method == http.MethodPut {
+				body = f.body
+			} else {
+				path += "?confirm=true"
+			}
+			request := authenticatedMutationRequest(t, method, path, body, f.access.operator.Token, f.access.operator.CSRFToken)
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			var payload map[string]any
+			if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+				t.Fatal(err)
+			}
+			if response.Code != http.StatusForbidden || payload["effect_may_be_committed"] != true ||
+				payload["effect_may_have_been_committed"] != true || payload["retryable"] != false ||
+				payload["revision"] != nil || payload["binding"] != nil {
+				t.Fatalf("revoked request hid its partial draft effect incorrectly: status=%d body=%s", response.Code, response.Body.String())
+			}
+			current, err := f.access.projects.GetProject(ctx, f.access.projectID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if current.CurrentRevisionID == project.CurrentRevisionID {
+				t.Fatal("EnsureProjectDraft committed no successor before the tested binding write")
+			}
+			bindings, err := f.access.projects.ListLightingNodeBindings(ctx, current.CurrentRevisionID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(bindings) != 1 || bindings[0].Configuration.Channels[0].MaximumLevel != 40 {
+				t.Fatalf("revoked binding mutation unexpectedly committed or lost source state: %+v", bindings)
+			}
+		})
+	}
+}
+
+func TestLightingConfigurationSuppressesCommittedResultAfterGrantRevocation(t *testing.T) {
+	f := setupLightingConfigurationACLFixture(t)
+	ctx := context.Background()
+	option := Option(func(server *Server) {
+		registerOperatorLightingConfigurationRoutes(server.mux, f.access.h.auth, f.devices, f.access.projects, lightingConfigurationHooks{
+			BeforeResponse: func() {
+				if err := f.access.access.SetPermissions(ctx, f.access.owner.Session.User.ID, f.access.operatorID, f.access.projectID, nil); err != nil {
+					t.Errorf("revoke DeviceConfigure before response: %v", err)
+				}
+			},
+		})
+	})
+	handler := New(option, WithProjectRouteQualification(f.access.access)).Handler()
+	request := authenticatedMutationRequest(t, http.MethodPut,
+		"/api/v1/projects/"+f.access.projectID+"/lighting-controller/configuration/"+f.deviceID,
+		f.body, f.access.operator.Token, f.access.operator.CSRFToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	var payload map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusForbidden || payload["effect_may_be_committed"] != true ||
+		payload["effect_may_have_been_committed"] != true || payload["retryable"] != false ||
+		payload["binding"] != nil || payload["expected_configuration_hash"] != nil {
+		t.Fatalf("revoked Operator received a result or retryable response: HTTP %d %+v", response.Code, payload)
+	}
+	project, err := f.access.projects.GetProject(ctx, f.access.projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindings, err := f.access.projects.ListLightingNodeBindings(ctx, project.CurrentRevisionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bindings) != 1 || bindings[0].DeviceID != f.deviceID {
+		t.Fatalf("committed configuration state was misreported or lost: %+v", bindings)
+	}
+}
+
+func TestLightingConfigurationDeleteDoesNotCommitAfterProjectGrantRevocation(t *testing.T) {
+	f := setupLightingConfigurationACLFixture(t)
+	ctx := context.Background()
+	project, err := f.access.projects.GetProject(ctx, f.access.projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.access.projects.SetLightingNodeBinding(ctx, project.CurrentRevisionID, lightingnode.ProjectBinding{
+		RevisionID: project.CurrentRevisionID, DeviceID: f.deviceID, ProfileID: lightingnode.ProfileID,
+		Configuration: f.config, Aliases: map[string]string{"front_warm": "warm_a"},
+	}, f.access.owner.Session.User.ID); err != nil {
+		t.Fatal(err)
+	}
+	option := Option(func(server *Server) {
+		registerOperatorLightingConfigurationRoutes(server.mux, f.access.h.auth, f.devices, f.access.projects, lightingConfigurationHooks{
+			BeforeMutation: func() {
+				if err := f.access.access.SetPermissions(ctx, f.access.owner.Session.User.ID, f.access.operatorID, f.access.projectID, nil); err != nil {
+					t.Errorf("revoke DeviceConfigure before delete: %v", err)
+				}
+			},
+		})
+	})
+	handler := New(option, WithProjectRouteQualification(f.access.access)).Handler()
+	request := authenticatedMutationRequest(t, http.MethodDelete,
+		"/api/v1/projects/"+f.access.projectID+"/lighting-controller/configuration/"+f.deviceID+"?confirm=true",
+		nil, f.access.operator.Token, f.access.operator.CSRFToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("revoked Operator delete status=%d body=%s", response.Code, response.Body.String())
+	}
+	bindings, err := f.access.projects.ListLightingNodeBindings(ctx, project.CurrentRevisionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bindings) != 1 || bindings[0].DeviceID != f.deviceID {
+		t.Fatalf("lighting configuration was deleted after DeviceConfigure revocation: %+v", bindings)
+	}
+}
 
 func TestOperatorLightingConfigurationSavesAndReportsMatchingHealth(t *testing.T) {
 	h := newAuthHarness(t)
@@ -32,7 +287,7 @@ func TestOperatorLightingConfigurationSavesAndReportsMatchingHealth(t *testing.T
 		ID: "lighting-01", ProjectID: project.ID, ProfileID: lightingnode.ProfileID,
 		Kind: deviceexperience.DeviceGeneric, DisplayName: "Front Lighting",
 		ProtocolVersion: deviceexperience.ProtocolVersion1,
-		Capabilities: lightingnode.CapabilityKeys(), Enabled: true,
+		Capabilities:    lightingnode.CapabilityKeys(), Enabled: true,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +302,7 @@ func TestOperatorLightingConfigurationSavesAndReportsMatchingHealth(t *testing.T
 	}}
 	body, _ := json.Marshal(lightingConfigurationRequest{
 		Configuration: config,
-		Aliases: map[string]string{"front_warm": "warm_a", "front_cold": "cold_a"},
+		Aliases:       map[string]string{"front_warm": "warm_a", "front_cold": "cold_a"},
 	})
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/projects/"+project.ID+"/lighting-controller/configuration/lighting-01", bytes.NewReader(body))
 	req.RemoteAddr = "127.0.0.1:19501"
@@ -67,7 +322,7 @@ func TestOperatorLightingConfigurationSavesAndReportsMatchingHealth(t *testing.T
 	observedBytes, _ := json.Marshal(lightingnode.Observation{
 		SchemaVersion: lightingnode.SchemaVersion1,
 		CurrentLevels: map[string]float64{"warm_a": 0, "cold_a": 0},
-		DMXHealthy: true, ConfigurationHash: hash, Authority: lightingnode.AuthorityStageCore,
+		DMXHealthy:    true, ConfigurationHash: hash, Authority: lightingnode.AuthorityStageCore,
 	})
 	if _, err := devices.ObserveDevice(ctx, deviceexperience.RuntimeObservation{
 		DeviceID: "lighting-01", Connection: deviceexperience.ConnectionOnline,
@@ -119,7 +374,7 @@ func TestOperatorLightingConfigurationKeepsMigratedV2NodeVisible(t *testing.T) {
 		ID: deviceID, ProjectID: project.ID, ProfileID: lightingnode.ProfileID,
 		Kind: deviceexperience.DeviceGeneric, DisplayName: "Migrated Lighting",
 		ProtocolVersion: deviceexperience.ProtocolVersion1,
-		Capabilities: lightingnode.CapabilityKeys(), Enabled: true,
+		Capabilities:    lightingnode.CapabilityKeys(), Enabled: true,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -235,4 +490,144 @@ func TestOperatorLightingConfigurationWriteBlockedDuringShow(t *testing.T) {
 	if res.Code != http.StatusLocked {
 		t.Fatalf("status=%d body=%s", res.Code, res.Body.String())
 	}
+}
+
+
+func TestLightingConfigurationWritableUsesV2AssignmentNotLegacyProjectID(t *testing.T) {
+	const projectID = "project-a"
+	v1 := deviceexperience.Device{
+		ProfileID: lightingnode.ProfileID,
+		ProtocolVersion: deviceexperience.ProtocolVersion1,
+		ProjectID: projectID,
+	}
+	if !lightingConfigurationWritable(v1, projectID) || lightingConfigurationWritable(v1, "other") {
+		t.Fatal("v1 lighting device must use legacy ProjectID")
+	}
+	for _, state := range []string{"BLOCKED", "ACTIVE"} {
+		v2 := deviceexperience.Device{
+			ProfileID: lightingnode.ProfileID,
+			ProtocolVersion: deviceexperience.ProtocolVersion2,
+			Enabled: true,
+			Assignment: &deviceexperience.AssignmentRecord{ProjectID: projectID, State: state},
+		}
+		if !lightingConfigurationWritable(v2, projectID) {
+			t.Fatalf("v2 assignment %s should permit Draft authoring", state)
+		}
+		if lightingConfigurationWritable(v2, "other") {
+			t.Fatalf("v2 assignment %s must not permit cross-Project write", state)
+		}
+		v2.ProjectID = projectID
+		if lightingConfigurationWritable(v2, projectID) {
+			t.Fatal("v2 must not accept legacy project ownership")
+		}
+	}
+	for _, state := range []string{"UNASSIGNED", "PREPARING", "LEGACY", ""} {
+		v2 := deviceexperience.Device{
+			ProfileID: lightingnode.ProfileID,
+			ProtocolVersion: deviceexperience.ProtocolVersion2,
+			Enabled: true,
+			Assignment: &deviceexperience.AssignmentRecord{ProjectID: projectID, State: state},
+		}
+		if lightingConfigurationWritable(v2, projectID) {
+			t.Fatalf("v2 %q must not allow configuration write", state)
+		}
+	}
+	if lightingConfigurationWritable(deviceexperience.Device{
+		ProfileID: lightingnode.ProfileID,
+		ProtocolVersion: deviceexperience.ProtocolVersion2,
+		Enabled: true,
+	}, projectID) {
+		t.Fatal("missing v2 assignment must never authorize authoring")
+	}
+}
+
+func TestOperatorLightingConfigurationCanWriteAndDeleteMigratedV2Draft(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	project, revision, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "V2 Authoring", CreatedBy: "owner"})
+	if err != nil { t.Fatal(err) }
+	other, _, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "Other Project", CreatedBy: "owner"})
+	if err != nil { t.Fatal(err) }
+	devices, err := deviceexperience.NewRepository(h.db.DB)
+	if err != nil { t.Fatal(err) }
+	const deviceID = "lighting-v2-edit"
+	if _, err := devices.UpsertDevice(ctx, deviceexperience.Device{
+		ID: deviceID, ProjectID: project.ID, ProfileID: lightingnode.ProfileID,
+		Kind: deviceexperience.DeviceGeneric, DisplayName: "V2 Draft Lighting",
+		ProtocolVersion: deviceexperience.ProtocolVersion1,
+		Capabilities: lightingnode.CapabilityKeys(), Enabled: true,
+	}); err != nil { t.Fatal(err) }
+
+	first := lightingnode.Configuration{SchemaVersion: 1, Channels: []lightingnode.ChannelConfig{{
+		ChannelKey: "warm_a", ChannelNumber: 1, DisplayName: "Warm",
+		Kind: lightingnode.ChannelWarmWhite, MinimumLevel: 0, MaximumLevel: 100, Enabled: true,
+	}}}
+	if _, err := stageStore.SetLightingNodeBinding(ctx, revision.ID, lightingnode.ProjectBinding{
+		DeviceID: deviceID, ProfileID: lightingnode.ProfileID, Configuration: first,
+		Aliases: map[string]string{"front_warm": "warm_a"},
+	}, "owner"); err != nil { t.Fatal(err) }
+	if _, err := devices.MigrateLegacyLightingToV2Blocked(ctx, deviceID, project.ID, "owner"); err != nil {
+		t.Fatal(err)
+	}
+	device, err := devices.GetDevice(ctx, deviceID)
+	if err != nil { t.Fatal(err) }
+	if device.ProtocolVersion != deviceexperience.ProtocolVersion2 || device.ProjectID != "" ||
+		device.Assignment == nil || device.Assignment.State != "BLOCKED" || device.Assignment.ProjectID != project.ID {
+		t.Fatalf("expected projectless v2 with Hub-owned BLOCKED assignment: %+v", device)
+	}
+
+	credential, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil { t.Fatal(err) }
+	handler := New(WithOperatorLightingController(h.auth, devices, stageStore)).Handler()
+	next := first
+	next.Channels = append(append([]lightingnode.ChannelConfig(nil), first.Channels...),
+		lightingnode.ChannelConfig{
+			ChannelKey: "cold_b", ChannelNumber: 3, DisplayName: "Cold",
+			Kind: lightingnode.ChannelColdWhite, MinimumLevel: 0, MaximumLevel: 100, Enabled: true,
+		})
+	body, _ := json.Marshal(lightingConfigurationRequest{
+		Configuration: next, Aliases: map[string]string{"front_warm": "warm_a", "front_cold": "cold_b"},
+	})
+	request := func(method, projectID, suffix string, data []byte) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(method,
+			"/api/v1/projects/"+projectID+"/lighting-controller/configuration/"+deviceID+suffix,
+			bytes.NewReader(data))
+		req.RemoteAddr = "127.0.0.1:19512"
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set(csrfHeader, credential.CSRFToken)
+		req.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: credential.Token})
+		resp := httptest.NewRecorder()
+		handler.ServeHTTP(resp, req)
+		return resp
+	}
+	if response := request(http.MethodPut, other.ID, "", body); response.Code != http.StatusBadRequest {
+		t.Fatalf("v2 cross-project save status=%d body=%s", response.Code, response.Body.String())
+	}
+	if response := request(http.MethodPut, project.ID, "", body); response.Code != http.StatusOK {
+		t.Fatalf("v2 save status=%d body=%s", response.Code, response.Body.String())
+	}
+	updatedProject, err := stageStore.GetProject(ctx, project.ID)
+	if err != nil { t.Fatal(err) }
+	bindings, err := stageStore.ListLightingNodeBindings(ctx, updatedProject.CurrentRevisionID)
+	if err != nil { t.Fatal(err) }
+	if len(bindings) != 1 || len(bindings[0].Configuration.Channels) != 2 ||
+		bindings[0].Aliases["front_cold"] != "cold_b" {
+		t.Fatalf("v2 Draft save did not preserve new channel/alias: %+v", bindings)
+	}
+	assignment, err := devices.GetAssignmentRecord(ctx, deviceID)
+	if err != nil { t.Fatal(err) }
+	if assignment.State != "BLOCKED" || assignment.ProjectID != project.ID || assignment.RuntimeSnapshotID != "" {
+		t.Fatalf("Draft edit must not activate or transfer v2 Lighting device: %+v", assignment)
+	}
+	if response := request(http.MethodDelete, other.ID, "?confirm=true", nil); response.Code != http.StatusNotFound {
+		t.Fatalf("v2 cross-project delete status=%d body=%s", response.Code, response.Body.String())
+	}
+	if response := request(http.MethodDelete, project.ID, "?confirm=true", nil); response.Code != http.StatusNoContent {
+		t.Fatalf("v2 authorized delete status=%d body=%s", response.Code, response.Body.String())
+	}
+	bindings, err = stageStore.ListLightingNodeBindings(ctx, updatedProject.CurrentRevisionID)
+	if err != nil { t.Fatal(err) }
+	if len(bindings) != 0 { t.Fatalf("Draft delete left bindings: %+v", bindings) }
 }

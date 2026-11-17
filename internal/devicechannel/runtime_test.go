@@ -20,8 +20,8 @@ import (
 	"github.com/ali96adil/StageCore/internal/db"
 	"github.com/ali96adil/StageCore/internal/devicechannel"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
-	"github.com/ali96adil/StageCore/internal/lightingnode"
 	"github.com/ali96adil/StageCore/internal/domain"
+	"github.com/ali96adil/StageCore/internal/lightingnode"
 	"github.com/ali96adil/StageCore/internal/store"
 	"golang.org/x/net/websocket"
 )
@@ -29,14 +29,15 @@ import (
 const testDeviceID = "44444444-4444-4444-8444-444444444444"
 
 type runtimeFixture struct {
-	runtime   *devicechannel.Runtime
-	repo      *deviceexperience.Repository
-	dbHandle  *db.Handle
-	auth      *companionauth.Service
-	projectID string
-	token     string
-	session   domain.CompanionRuntimeSession
-	server    *httptest.Server
+	runtime    *devicechannel.Runtime
+	repo       *deviceexperience.Repository
+	dbHandle   *db.Handle
+	eventStore *store.Store
+	auth       *companionauth.Service
+	projectID  string
+	token      string
+	session    domain.CompanionRuntimeSession
+	server     *httptest.Server
 }
 
 func newRuntimeFixture(t *testing.T) *runtimeFixture {
@@ -44,6 +45,14 @@ func newRuntimeFixture(t *testing.T) *runtimeFixture {
 }
 
 func newRuntimeFixtureWithOptions(t *testing.T, options ...devicechannel.RuntimeOption) *runtimeFixture {
+	return newRuntimeFixtureInternal(t, false, options...)
+}
+
+func newRuntimeFixtureWithEventRecorder(t *testing.T, options ...devicechannel.RuntimeOption) *runtimeFixture {
+	return newRuntimeFixtureInternal(t, true, options...)
+}
+
+func newRuntimeFixtureInternal(t *testing.T, recordEvents bool, options ...devicechannel.RuntimeOption) *runtimeFixture {
 	t.Helper()
 	ctx := context.Background()
 	handle, err := db.Open(ctx, db.Config{DataRoot: t.TempDir()})
@@ -79,12 +88,17 @@ func newRuntimeFixtureWithOptions(t *testing.T, options ...devicechannel.Runtime
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo, err := deviceexperience.NewRepository(handle.DB)
+	eventStore := store.New(handle.DB, clock.Real{})
+	repositoryOptions := []deviceexperience.Option{}
+	if recordEvents {
+		repositoryOptions = append(repositoryOptions, deviceexperience.WithEventRecorder(eventStore))
+	}
+	repo, err := deviceexperience.NewRepository(handle.DB, repositoryOptions...)
 	if err != nil {
 		t.Fatal(err)
 	}
 	runtime := devicechannel.New(repo, auth, options...)
-	fixture := &runtimeFixture{runtime: runtime, repo: repo, dbHandle: handle, auth: auth, projectID: project.ID, token: credential.Token, session: session}
+	fixture := &runtimeFixture{runtime: runtime, repo: repo, dbHandle: handle, eventStore: eventStore, auth: auth, projectID: project.ID, token: credential.Token, session: session}
 	fixture.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		runtime.ServeWebSocket(w, r, session, credential.Token)
 	}))
@@ -182,6 +196,75 @@ func TestSilentStageDeviceTimesOutAndPreservesLastSeen(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+}
+
+func TestRuntimeRecordsAuthenticatedTransportConnectAndDisconnect(t *testing.T) {
+	f := newRuntimeFixtureWithEventRecorder(t)
+	ctx := context.Background()
+	first := f.connect(t)
+	second := f.connect(t) // the new authenticated socket replaces the first generation
+	if err := second.Close(); err != nil {
+		t.Fatal(err)
+	}
+	from := time.Now().UTC().Add(-time.Minute)
+	through := time.Now().UTC().Add(time.Minute)
+	deadline := time.Now().Add(3 * time.Second)
+	var events []contracts.EventEnvelope
+	for time.Now().Before(deadline) {
+		var err error
+		events, _, err = f.eventStore.ListProjectDeviceTransportEvents(ctx, f.projectID, from, through)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(events) == 4 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(events) != 4 {
+		t.Fatalf("transport events=%d want connect, replacement, reconnect, disconnect", len(events))
+	}
+	type transition struct {
+		DeviceID             string `json:"device_id"`
+		TransportState       string `json:"transport_state"`
+		ConnectionGeneration int64  `json:"connection_generation"`
+		Reason               string `json:"reason"`
+	}
+	wantTypes := []string{
+		contracts.StageDeviceTransportConnectedEventType,
+		contracts.StageDeviceTransportDisconnectedEventType,
+		contracts.StageDeviceTransportConnectedEventType,
+		contracts.StageDeviceTransportDisconnectedEventType,
+	}
+	wantReasons := []string{"", deviceexperience.TransportDisconnectConnectionReplaced, "", deviceexperience.TransportDisconnectSocketClosed}
+	var transitions []transition
+	for i, event := range events {
+		if event.EventType != wantTypes[i] || event.ProjectID != f.projectID || event.Source != "hub.stage_device_runtime" {
+			t.Fatalf("transport event %d=%+v", i, event)
+		}
+		var got transition
+		if err := json.Unmarshal(event.Payload, &got); err != nil {
+			t.Fatal(err)
+		}
+		wantState := "CONNECTED"
+		if i%2 == 1 {
+			wantState = "DISCONNECTED"
+		}
+		if got.DeviceID != testDeviceID || got.TransportState != wantState || got.Reason != wantReasons[i] {
+			t.Fatalf("transport transition %d=%+v event=%+v", i, got, event)
+		}
+		transitions = append(transitions, got)
+	}
+	if transitions[0].ConnectionGeneration <= 0 || transitions[0].ConnectionGeneration != transitions[1].ConnectionGeneration ||
+		transitions[2].ConnectionGeneration <= transitions[0].ConnectionGeneration || transitions[2].ConnectionGeneration != transitions[3].ConnectionGeneration {
+		t.Fatalf("reconnect generations do not fence the replaced socket: %+v", transitions)
+	}
+	for _, event := range events {
+		if strings.Contains(string(event.Payload), "TLS_WEBSOCKET") || strings.Contains(string(event.Payload), "remote") {
+			t.Fatalf("transport event contains unnecessary network details: %s", event.Payload)
+		}
+	}
+	_ = first.Close()
 }
 
 func TestReconnectDoesNotReplayPendingOrDuplicateCommand(t *testing.T) {
@@ -325,12 +408,12 @@ func testPairingInput(deviceID, publicKey string) companionauth.PairingRequestIn
 	nonce := make([]byte, 32)
 	_, _ = rand.Read(nonce)
 	return companionauth.PairingRequestInput{
-		CompanionID: deviceID,
-		DisplayName: "Tablet 01",
-		Hostname: "tablet-01.local",
-		Platform: "android",
+		CompanionID:  deviceID,
+		DisplayName:  "Tablet 01",
+		Hostname:     "tablet-01.local",
+		Platform:     "android",
 		Architecture: "arm64",
-		Version: "1.0.0",
+		Version:      "1.0.0",
 		Capabilities: []string{
 			"tablet.media.play",
 			"tablet.media.stop",
@@ -338,8 +421,8 @@ func testPairingInput(deviceID, publicKey string) companionauth.PairingRequestIn
 			"display.countdown.show",
 		},
 		PublicKeyAlgorithm: domain.CompanionPublicKeyAlgorithm,
-		PublicKeyBase64: publicKey,
-		ClientNonceBase64: base64.StdEncoding.EncodeToString(nonce),
+		PublicKeyBase64:    publicKey,
+		ClientNonceBase64:  base64.StdEncoding.EncodeToString(nonce),
 	}
 }
 
@@ -382,8 +465,8 @@ func TestAuthenticatedReconnectCannotStealProjectOrDropExistingRuntime(t *testin
 			if err := websocket.JSON.Send(impostor, map[string]any{
 				"type": "device.hello", "schema_version": 1,
 				"device_id": testDeviceID, "project_id": claimedProject,
-				"device_kind": deviceexperience.DeviceTabletPlayer,
-				"display_name": "unapproved transfer",
+				"device_kind":      deviceexperience.DeviceTabletPlayer,
+				"display_name":     "unapproved transfer",
 				"protocol_version": deviceexperience.ProtocolVersion1,
 			}); err != nil {
 				t.Fatal(err)
@@ -485,7 +568,7 @@ func TestAuthenticatedV2HelloRegistersOnlyUnassignedWithoutRuntimeReady(t *testi
 	// configured the new Project or confirmed the real output, so stay BLOCKER.
 	if err := websocket.JSON.Send(ws, map[string]any{
 		"type": "device.observation", "schema_version": 2, "device_id": testDeviceID,
-		"readiness": deviceexperience.ReadinessReady,
+		"readiness":      deviceexperience.ReadinessReady,
 		"observed_state": json.RawMessage(`{"marker":"unassigned-v2"}`),
 	}); err != nil {
 		t.Fatal(err)
@@ -530,7 +613,7 @@ func TestAuthenticatedV2BlockedReconnectReadsHubAssignmentWithoutRuntimeReady(t 
 		ID: testDeviceID, Kind: deviceexperience.DeviceGeneric,
 		DisplayName: "Reusable Lighting", ProfileID: lightingnode.ProfileID,
 		ProtocolVersion: deviceexperience.ProtocolVersion2,
-		Enabled: true, Capabilities: lightingnode.CapabilityKeys(),
+		Enabled:         true, Capabilities: lightingnode.CapabilityKeys(),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -541,7 +624,7 @@ func TestAuthenticatedV2BlockedReconnectReadsHubAssignmentWithoutRuntimeReady(t 
 		AckDeviceID: testDeviceID, AckEpoch: 1, AckGeneration: 1,
 		AckChallenge: challenge, AckBlackout: true,
 		AckChannelLevels: make([]uint8, lightingnode.MaxChannels),
-		ActorID: "test-owner", IdempotencyKey: "blocked-reconnect-test",
+		ActorID:          "test-owner", IdempotencyKey: "blocked-reconnect-test",
 	})
 	if err != nil || commit.NextState != "BLOCKED" || commit.ToEpoch != 2 {
 		t.Fatalf("setup blocked assignment: %+v err=%v", commit, err)
@@ -556,7 +639,7 @@ func TestAuthenticatedV2BlockedReconnectReadsHubAssignmentWithoutRuntimeReady(t 
 		"type": "device.hello", "schema_version": 1, "device_id": testDeviceID,
 		"device_kind": deviceexperience.DeviceGeneric, "display_name": "Reusable Lighting",
 		"protocol_version": deviceexperience.ProtocolVersion2,
-		"profile_id": lightingnode.ProfileID, "capabilities": lightingnode.CapabilityKeys(),
+		"profile_id":       lightingnode.ProfileID, "capabilities": lightingnode.CapabilityKeys(),
 		"readiness": deviceexperience.ReadinessReady,
 	}); err != nil {
 		t.Fatal(err)

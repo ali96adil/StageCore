@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/pluginprotocol"
 )
 
@@ -14,13 +15,13 @@ func (h *Host) Probe(ctx context.Context) (*pluginprotocol.Ready, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	if err := ctx.Err(); err != nil {
+	if err := capability.CheckDispatch(ctx); err != nil {
 		return nil, err
 	}
-	if err := h.ensureStartedLocked(); err != nil {
+	if err := h.ensureStartedLocked(ctx); err != nil {
 		return nil, err
 	}
-	if err := ctx.Err(); err != nil {
+	if err := capability.CheckDispatch(ctx); err != nil {
 		h.stopLocked()
 		return nil, err
 	}
