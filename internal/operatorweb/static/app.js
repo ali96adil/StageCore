@@ -20,6 +20,7 @@ const state = {
   runtimePreflightUser: null,
   runtimePreflight: null,
   runtimePreflightCheckedAt: 0,
+  runtimePreflightFreshnessMs: 15000,
   runtimePreflightRetryAfter: 0,
   runtimePreflightRequestGeneration: 0,
   runtimePreflightRefreshing: false,
@@ -1418,13 +1419,11 @@ function runtimeRenderIsCurrent(generation, user, projectID) {
     encodeURIComponent(state.project?.project_id || "") === projectID;
 }
 
-const runtimePreflightFreshnessMs = 15000;
-
 function runtimePreflightIsFresh(projectID, user, now = Date.now()) {
   const age = now - state.runtimePreflightCheckedAt;
   return state.runtimePreflightProjectID === projectID && state.runtimePreflightUser === user &&
     !!state.runtimePreflight && state.runtimePreflightCheckedAt > 0 &&
-    age >= 0 && age <= runtimePreflightFreshnessMs;
+    age >= 0 && age <= state.runtimePreflightFreshnessMs;
 }
 
 function refreshRuntimePreflight(projectID, user) {
@@ -1452,7 +1451,7 @@ function refreshRuntimePreflight(projectID, user) {
       return;
     }
     state.runtimePreflightRefreshing = false;
-    state.runtimePreflightRetryAfter = Date.now() + runtimePreflightFreshnessMs;
+    state.runtimePreflightRetryAfter = Date.now() + state.runtimePreflightFreshnessMs;
     state.runtimePreflight = null;
     state.runtimePreflightCheckedAt = 0;
     if (state.page === "runtime") renderRuntime(false, { refreshPreflight: false }).catch(() => {});

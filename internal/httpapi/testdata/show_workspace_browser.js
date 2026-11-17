@@ -44,6 +44,12 @@
       }
       await setViewport(390, 844);
     };
+    const runtimeReady = () => {
+      const button = document.getElementById("startShowButton");
+      const preflight = [...document.querySelectorAll(".runtime-controls .message strong")]
+        .find((node) => node.textContent.startsWith("Preflight:"));
+      return !!button && !!preflight && !/CHECKING|NOT CURRENT/.test(preflight.textContent);
+    };
     const keyboardNavigate = async (page) => {
       const nav = document.querySelector(`[data-page="${page}"]`);
       if (!nav) throw new Error(`${page} navigation is unavailable for ${state.user.role}`);
@@ -51,8 +57,8 @@
       await fetch("/show-workspace-key-ready", { method: "POST" });
       const deadline = Date.now() + 5000;
       const pageReady = () => page === "cues"
-        ? document.querySelector("#content h1")?.textContent.includes("Cues")
-        : !!document.getElementById("startShowButton");
+        ? !!document.getElementById("cueListSearch")
+        : runtimeReady();
       while (Date.now() < deadline && !pageReady()) await new Promise((resolve) => setTimeout(resolve, 25));
       if (state.page !== page || !pageReady()) throw new Error(`native keyboard did not open ${page} for ${state.user.role}`);
       if (!nav.matches(":focus-visible")) throw new Error(`native keyboard focus is not visible for ${state.user.role}`);
@@ -67,8 +73,8 @@
       });
       const deadline = Date.now() + 5000;
       const pageReady = () => page === "cues"
-        ? document.querySelector("#content h1")?.textContent.includes("Cues")
-        : !!document.getElementById("startShowButton");
+        ? !!document.getElementById("cueListSearch")
+        : runtimeReady();
       while (Date.now() < deadline && !pageReady()) await new Promise((resolve) => setTimeout(resolve, 25));
       if (state.page !== page || !pageReady()) throw new Error(`emulated touch did not open ${page} for ${state.user.role}`);
     };
@@ -109,7 +115,9 @@
     while (Date.now() < stopDeadline && document.getElementById("appView").dataset.showSession !== "inactive") {
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
-    if (document.getElementById("appView").dataset.showSession !== "inactive") throw new Error("normal SHOW stop did not clear the active presentation");
+    if (document.getElementById("appView").dataset.showSession !== "inactive") {
+      throw new Error("normal SHOW stop did not clear the active presentation");
+    }
     if (document.getElementById("stopSessionButton")) throw new Error("runtime still shows an active Session after SHOW stop");
     if (postRequests.length !== 1 || !postRequests[0].includes("/runtime/stop-session")) {
       throw new Error(`SHOW exit made unexpected mutation requests: ${postRequests.join(", ")}`);
@@ -173,14 +181,28 @@
     document.getElementById("runtimeRehearsalApproval").click();
     if (state.page !== "timing") throw new Error("Technician Preview timing review control did not open the Timing workspace");
     await navigate("runtime");
-    document.getElementById("stopSessionButton")?.click();
+    const rehearsalRuntimeDeadline = Date.now() + 5000;
+    while (Date.now() < rehearsalRuntimeDeadline &&
+        (!document.getElementById("stopSessionButton") || !document.getElementById("runtimeRehearsalApproval"))) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    const rehearsalStopButton = document.getElementById("stopSessionButton");
+    if (!rehearsalStopButton || rehearsalStopButton.disabled || !document.getElementById("runtimeRehearsalApproval")) {
+      throw new Error(`active Preview Runtime did not finish loading; page=${state.page}; content=${document.getElementById("content")?.textContent.slice(0, 240)}`);
+    }
+    const previewStopCount = apiMutations.filter((request) => request.startsWith("POST ") && request.includes("/runtime/stop-session")).length;
+    rehearsalStopButton.click();
     const previewStopDeadline = Date.now() + 5000;
-    while (Date.now() < previewStopDeadline && document.getElementById("appView").dataset.showSession !== "inactive") {
+    while (Date.now() < previewStopDeadline &&
+        (apiMutations.filter((request) => request.startsWith("POST ") && request.includes("/runtime/stop-session")).length === previewStopCount ||
+          state.runtimeEndedRehearsal?.sessionID !== previewSession.session_id ||
+          document.getElementById("appView").dataset.showSession !== "inactive")) {
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
     if (document.getElementById("appView").dataset.showSession !== "inactive" ||
+        state.runtimeEndedRehearsal?.sessionID !== previewSession.session_id ||
         !document.getElementById("runtimeRehearsalApproval")) {
-      throw new Error("ended Preview rehearsal did not retain access to timing review");
+      throw new Error("ended Preview rehearsal did not retain access to timing review after a confirmed STOP request");
     }
     await keyboardNavigate("cues");
     if (state.page !== "cues" || !document.querySelector("#content h1")?.textContent.includes("Cues")) {

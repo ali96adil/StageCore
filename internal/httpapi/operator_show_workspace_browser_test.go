@@ -271,6 +271,15 @@ func TestBrowserShowWorkspacePinsRuntime(t *testing.T) {
 			w.Header().Set("Content-Type", "application/javascript")
 			w.Write(testScript)
 		default:
+			if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/preflight") {
+				writeJSON(w, http.StatusOK, map[string]any{
+					"status": "PASS", "project_id": project.ID, "runtime_snapshot_id": published.ID,
+					"snapshot_version": published.SnapshotVersion, "evaluated_at": time.Now().UTC(),
+					"checks": []any{}, "roles": []any{}, "media": []any{},
+					"storage": map[string]any{"status": "PASS", "state": "HEALTHY", "writable": true},
+				})
+				return
+			}
 			handler.ServeHTTP(w, r)
 		}
 	}))

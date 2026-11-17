@@ -232,7 +232,8 @@ test("Runtime renders usable controls before slow Preflight and keeps SHOW disab
     state: {
       csrf: "token", page: "runtime", user, project: {project_id: "project-a"},
       runtimeRenderGeneration: 0, runtimePreflightProjectID: "", runtimePreflightUser: null,
-      runtimePreflight: null, runtimePreflightCheckedAt: 0, runtimePreflightRetryAfter: 0,
+      runtimePreflight: null, runtimePreflightCheckedAt: 0, runtimePreflightFreshnessMs: 15000,
+      runtimePreflightRetryAfter: 0,
       runtimePreflightRequestGeneration: 0, runtimePreflightRefreshing: false,
       runtimePreflightRequestKey: "", runtimeForceExitAvailable: false,
       runtimeEndedRehearsal: null, runtimeCueReceipt: null,
