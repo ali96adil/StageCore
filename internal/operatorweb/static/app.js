@@ -7,15 +7,24 @@ const state = {
   projects: [],
   project: null,
   page: "projects",
+  projectOpenGeneration: 0,
+  dashboardRenderGeneration: 0,
   cues: [],
   currentRevision: null,
   validation: null,
+  cueRenderGeneration: 0,
   runtimeTimer: null,
   runtimeRenderGeneration: 0,
   runtimePollInFlight: false,
   runtimePreflightProjectID: "",
   runtimePreflightUser: null,
   runtimePreflight: null,
+  runtimePreflightCheckedAt: 0,
+  runtimePreflightRetryAfter: 0,
+  runtimePreflightRequestGeneration: 0,
+  runtimePreflightRefreshing: false,
+  runtimePreflightRequestKey: "",
+  preflightRenderGeneration: 0,
   runtimeForceExitAvailable: false,
   showSessionActive: false,
 };
@@ -29,6 +38,31 @@ const globalMessage = el("globalMessage");
 const cueDialog = el("cueDialog");
 const cueForm = el("cueForm");
 const actionsEditor = el("actionsEditor");
+const projectPreflightRequests = new Map();
+
+function loadProjectPreflight(projectID) {
+  const csrf = state.csrf;
+  const user = state.user;
+  const key = `${csrf}\u001f${projectID}`;
+  const existing = projectPreflightRequests.get(key);
+  if (existing) return existing;
+  const request = api(`/api/v1/projects/${encodeURIComponent(projectID)}/preflight`)
+    .then((report) => {
+      if (state.csrf === csrf && state.user === user && state.project?.project_id === projectID) {
+        state.runtimePreflightProjectID = projectID;
+        state.runtimePreflightUser = user;
+        state.runtimePreflight = report;
+        state.runtimePreflightCheckedAt = Date.now();
+        state.runtimePreflightRetryAfter = 0;
+      }
+      return report;
+    })
+    .finally(() => {
+      if (projectPreflightRequests.get(key) === request) projectPreflightRequests.delete(key);
+    });
+  projectPreflightRequests.set(key, request);
+  return request;
+}
 
 function esc(value) {
   return String(value ?? "")
@@ -247,6 +281,17 @@ function setPage(page) {
   if (page !== "runtime") stopRuntimePolling();
 }
 
+function renderPageLoading(page) {
+  const copy = {
+    runtime: ["Runtime", "Loading the selected Project's current runtime state…", "تحميل حالة التشغيل الحالية للمشروع المحدد…"],
+    preflight: ["Preflight", "Checking the selected Project against live Hub state…", "جارٍ فحص المشروع المحدد مقابل حالة Hub الحالية…"],
+    cues: ["Cues", "Loading Cues for the selected Project…", "جارٍ تحميل كيوهات المشروع المحدد…"],
+  }[page];
+  if (!copy) return;
+  const arabic = localStorage.getItem("stagecore_locale") !== "en";
+  content.innerHTML = `<section class="card" role="status" aria-live="polite"><p class="eyebrow">${esc(copy[0])}</p><h1>${esc(copy[0])}</h1><p class="muted">${esc(copy[arabic ? 2 : 1])}</p></section>`;
+}
+
 function setShowSessionPresentation(active) {
   state.showSessionActive = !!active;
   if (appView) appView.dataset.showSession = active ? "active" : "inactive";
@@ -258,6 +303,7 @@ async function navigate(page) {
   if (!state.project) return;
   setPage(page);
   setMessage(globalMessage, "");
+  renderPageLoading(page);
   try {
     if (page === "dashboard") await renderDashboard();
     if (page === "files") await renderScopedProjectFiles();
@@ -402,13 +448,19 @@ async function createProject(event) {
 }
 
 async function openProject(projectID) {
+  const generation = ++state.projectOpenGeneration;
+  const user = state.user;
+  const csrf = state.csrf;
   try {
     const payload = await api(`/api/v1/projects/${encodeURIComponent(projectID)}`);
+    if (generation !== state.projectOpenGeneration || state.user !== user || state.csrf !== csrf) return;
     state.project = payload.project;
     updateWorkspaceProject();
     await navigate("dashboard");
   } catch (error) {
-    setMessage(globalMessage, errorMessage(error), "error");
+    if (generation === state.projectOpenGeneration && state.user === user && state.csrf === csrf) {
+      setMessage(globalMessage, errorMessage(error), "error");
+    }
   }
 }
 
@@ -423,11 +475,16 @@ function pill(text, kind = "neutral") {
 }
 
 async function renderDashboard() {
+  const user = state.user;
+  const selectedProjectID = state.project?.project_id || "";
+  const generation = state.dashboardRenderGeneration = (state.dashboardRenderGeneration || 0) + 1;
   const projectID = encodeURIComponent(state.project.project_id);
   const [dashboard, runtime] = await Promise.all([
     api(`/api/v1/projects/${projectID}/dashboard`),
     api(`/api/v1/projects/${projectID}/runtime`).catch(() => null),
   ]);
+  if (state.dashboardRenderGeneration !== generation || state.page !== "dashboard" ||
+      state.user !== user || state.project?.project_id !== selectedProjectID) return;
   state.project = dashboard.project;
   updateWorkspaceProject();
   const showSessionActive = runtime?.session?.type === "SHOW" || runtime?.mode === "SHOW" ||
@@ -487,10 +544,8 @@ async function renderDashboard() {
   el("dashboardRuntime").addEventListener("click", () => navigate("runtime"));
 }
 
-async function loadCues() {
-  const payload = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/cues`);
-  state.cues = payload.cues || [];
-  return payload;
+async function loadCues(projectID = state.project?.project_id) {
+  return api(`/api/v1/projects/${encodeURIComponent(projectID || "")}/cues`);
 }
 
 const cueListFilterStoragePrefix = "stagecore.cue-list.filters.v1:";
@@ -581,17 +636,26 @@ function applyCueListFilters() {
 }
 
 async function renderCues(message = "", messageKind = "success") {
-  const payload = await loadCues();
+  const user = state.user;
+  const projectID = state.project?.project_id || "";
+  const encodedProjectID = encodeURIComponent(projectID);
+  const renderGeneration = ++state.cueRenderGeneration;
+  const isCurrent = () => state.cueRenderGeneration === renderGeneration &&
+    state.page === "cues" && state.user === user && state.project?.project_id === projectID;
+  const [payload, runtime] = await Promise.all([
+    loadCues(projectID),
+    api(`/api/v1/projects/${encodedProjectID}/runtime`).catch(() => null),
+  ]);
+  if (!isCurrent()) return;
+  state.cues = payload.cues || [];
   state.currentRevision = payload.revision || null;
   const hasDraft = payload.revision?.status === "DRAFT";
   let validation = null;
   if (hasDraft) {
-    try { validation = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/validation`); }
+    try { validation = await api(`/api/v1/projects/${encodedProjectID}/validation`); }
     catch (_) { validation = null; }
+    if (!isCurrent()) return;
   }
-  let runtime = null;
-  try { runtime = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime`); }
-  catch (_) { runtime = null; }
 
   state.validation = validation;
   const canModify = canEdit();
@@ -1354,27 +1418,58 @@ function runtimeRenderIsCurrent(generation, user, projectID) {
     encodeURIComponent(state.project?.project_id || "") === projectID;
 }
 
+const runtimePreflightFreshnessMs = 15000;
+
+function runtimePreflightIsFresh(projectID, user, now = Date.now()) {
+  const age = now - state.runtimePreflightCheckedAt;
+  return state.runtimePreflightProjectID === projectID && state.runtimePreflightUser === user &&
+    !!state.runtimePreflight && state.runtimePreflightCheckedAt > 0 &&
+    age >= 0 && age <= runtimePreflightFreshnessMs;
+}
+
+function refreshRuntimePreflight(projectID, user) {
+  const requestKey = `${state.csrf}\u001f${projectID}`;
+  if (state.runtimePreflightRequestKey === requestKey && state.runtimePreflightRefreshing) return;
+  if (Date.now() < state.runtimePreflightRetryAfter) return;
+  const requestGeneration = ++state.runtimePreflightRequestGeneration;
+  state.runtimePreflightRequestKey = requestKey;
+  state.runtimePreflightRefreshing = true;
+  loadProjectPreflight(projectID).then(() => {
+    if (state.runtimePreflightRequestGeneration !== requestGeneration) return;
+    if (state.user !== user || state.project?.project_id !== projectID) {
+      state.runtimePreflightRefreshing = false;
+      state.runtimePreflightRequestKey = "";
+      return;
+    }
+    state.runtimePreflightRefreshing = false;
+    state.runtimePreflightRetryAfter = 0;
+    if (state.page === "runtime") renderRuntime(false, { refreshPreflight: false }).catch(() => {});
+  }).catch(() => {
+    if (state.runtimePreflightRequestGeneration !== requestGeneration) return;
+    if (state.user !== user || state.project?.project_id !== projectID) {
+      state.runtimePreflightRefreshing = false;
+      state.runtimePreflightRequestKey = "";
+      return;
+    }
+    state.runtimePreflightRefreshing = false;
+    state.runtimePreflightRetryAfter = Date.now() + runtimePreflightFreshnessMs;
+    state.runtimePreflight = null;
+    state.runtimePreflightCheckedAt = 0;
+    if (state.page === "runtime") renderRuntime(false, { refreshPreflight: false }).catch(() => {});
+  });
+}
+
 async function renderRuntime(startPolling = false, options = {}) {
   const user = state.user;
-  const projectID = encodeURIComponent(state.project.project_id);
+  const rawProjectID = state.project?.project_id || "";
+  const projectID = encodeURIComponent(rawProjectID);
   const renderGeneration = ++state.runtimeRenderGeneration;
   const refreshPreflight = options.refreshPreflight !== false;
-  const [runtime, preflight] = await Promise.all([
-    api(`/api/v1/projects/${projectID}/runtime`),
-    refreshPreflight
-      ? api(`/api/v1/projects/${projectID}/preflight`).catch(() => null)
-      : Promise.resolve(
-        state.runtimePreflightProjectID === projectID && state.runtimePreflightUser === user
-          ? state.runtimePreflight
-          : null,
-      ),
-  ]);
+  const runtime = await api(`/api/v1/projects/${projectID}/runtime`);
   if (!runtimeRenderIsCurrent(renderGeneration, user, projectID)) return;
-  if (refreshPreflight) {
-    state.runtimePreflightProjectID = projectID;
-    state.runtimePreflightUser = user;
-    state.runtimePreflight = preflight;
-  }
+  const preflightFresh = runtimePreflightIsFresh(rawProjectID, user);
+  const preflight = preflightFresh ? state.runtimePreflight : null;
+  if (refreshPreflight && !preflightFresh) refreshRuntimePreflight(rawProjectID, user);
   const active = runtime.session;
   setShowSessionPresentation(active?.type === "SHOW" || runtime.mode === "SHOW");
   const ended = state.runtimeEndedRehearsal;
@@ -1427,7 +1522,7 @@ async function renderRuntime(startPolling = false, options = {}) {
       : "STOP ALL CUES interrupts all active Cues and pending delays in this Session. It does not guarantee blackout. EMERGENCY BLACKOUT is a separate P0 operation for managed Lighting, Tablet and Native Visual outputs. Audio and external VDMX/OSC are never silently stopped.");
   const blockers = (preflight?.checks || []).filter((check) => check.status === "BLOCK").length;
   const warnings = (preflight?.checks || []).filter((check) => check.status === "WARN").length;
-  const showBlocked = preflight?.status === "BLOCK";
+  const showBlocked = !preflightFresh || !preflight || preflight.status === "BLOCK";
   const runtimeIssues = (preflight?.checks || []).filter((check) => check.status !== "PASS");
   const runtimeIssueGroups = groupRuntimeReadinessIssues(preflight?.checks || []);
   const runtimeIssueMarkup = runtimeIssueGroups.length
@@ -1459,7 +1554,7 @@ async function renderRuntime(startPolling = false, options = {}) {
         </div>
       </section>`
     : `<section class="card runtime-readiness-issues">
-        <div class="section-title-row"><div><h3>Runtime readiness</h3><p class="muted">No current Preflight issues.</p></div>${pill("READY", "good")}</div>
+        <div class="section-title-row"><div><h3>Runtime readiness</h3><p class="muted">${preflightFresh ? "No current Preflight issues." : "A fresh live Preflight report is required before SHOW can start."}</p></div>${pill(preflightFresh ? "READY" : (state.runtimePreflightRefreshing ? "CHECKING" : "NOT CURRENT"), preflightFresh ? "good" : "warn")}</div>
       </section>`;
   content.innerHTML = `
     <div class="page-head">
@@ -1484,9 +1579,9 @@ async function renderRuntime(startPolling = false, options = {}) {
       <section class="runtime-controls">
         ${!active ? `
           <p class="muted">Runtime is in EDIT mode.</p>
-          <div class="message ${preflight?.status === "BLOCK" ? "error" : preflight?.status === "WARN" ? "warn" : ""}">
-            <strong>Preflight: ${esc(preflight?.status || "UNKNOWN")}</strong>
-            <span> · ${esc(blockers)} critical issue(s) · ${esc(warnings)} warning(s) · advisory for live start</span>
+          <div class="message ${preflight?.status === "BLOCK" ? "error" : preflight?.status === "WARN" || !preflightFresh ? "warn" : ""}">
+            <strong>Preflight: ${esc(preflight?.status || (state.runtimePreflightRefreshing ? "CHECKING" : "NOT CURRENT"))}</strong>
+            <span> · ${preflightFresh ? `${esc(blockers)} critical issue(s) · ${esc(warnings)} warning(s) · advisory for live start` : "Waiting for the current live Hub report; SHOW stays disabled."}</span>
             <button id="runtimeOpenPreflight" class="button ghost" type="button">Open Preflight</button>
           </div>
           <label>${esc(rehearsalLabel)}

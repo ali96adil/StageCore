@@ -65,7 +65,7 @@ func TestEmbeddedOperatorWebIsOfflineAndSecurityBound(t *testing.T) {
 	if preflightRes.Code != http.StatusOK || !strings.HasPrefix(preflightRes.Header().Get("Content-Type"), "application/javascript") {
 		t.Fatalf("preflight.js status=%d content-type=%q", preflightRes.Code, preflightRes.Header().Get("Content-Type"))
 	}
-	if !strings.Contains(preflightRes.Body.String(), "/preflight") || !strings.Contains(preflightRes.Body.String(), "PASS / WARN / BLOCK") {
+	if !strings.Contains(preflightRes.Body.String(), "loadProjectPreflight(projectID)") || !strings.Contains(preflightRes.Body.String(), "PASS / WARN / BLOCK") {
 		t.Fatal("embedded Preflight client is missing authoritative readiness flow")
 	}
 

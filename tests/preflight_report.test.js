@@ -22,8 +22,8 @@ async function renderPreflightHarness(report) {
   const context = {
     navigate() {},
     renderDashboard() {},
-    state: {project: {project_id: "show-a", name: "Qariyat Show"}},
-    api: async () => { apiReads++; return report; },
+    state: {page: "preflight", user: {}, project: {project_id: "show-a", name: "Qariyat Show"}, preflightRenderGeneration: 0},
+    loadProjectPreflight: async () => { apiReads++; return report; },
     content,
     el(id) {
       if (!elements.has(id)) {

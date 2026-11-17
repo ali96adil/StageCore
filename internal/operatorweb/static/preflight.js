@@ -23,9 +23,9 @@ function bytesLabel(value) {
   return `${amount >= 10 || index === 0 ? amount.toFixed(0) : amount.toFixed(1)} ${units[index]}`;
 }
 
-async function loadPreflight() {
-  if (!state.project) throw new Error("Open a Project before running Preflight.");
-  return api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/preflight`);
+async function loadPreflight(projectID = state.project?.project_id) {
+  if (!projectID) throw new Error("Open a Project before running Preflight.");
+  return loadProjectPreflight(projectID);
 }
 
 function preflightDestination(category) {
@@ -161,8 +161,7 @@ function downloadPreflightReport(report) {
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-async function renderPreflight() {
-  const report = await loadPreflight();
+function renderPreflightReport(report, isCurrent) {
   const blockers = (report.checks || []).filter((check) => check.status === "BLOCK").length;
   const warnings = (report.checks || []).filter((check) => check.status === "WARN").length;
   content.innerHTML = `
@@ -172,15 +171,16 @@ async function renderPreflight() {
         <h1>${esc(state.project.name)} readiness</h1>
         <p>Authoritative Snapshot, Companion, media and storage checks used by SHOW entry.</p>
       </div>
-      <div class="toolbar">${pill(report.status, preflightKind(report.status))}<button id="exportPreflight" class="button ghost" type="button">Download report</button><button id="refreshPreflight" class="button" type="button">Refresh</button></div>
+      <div class="toolbar">${pill(isCurrent ? report.status : "CHECKING", isCurrent ? preflightKind(report.status) : "warn")}<button id="exportPreflight" class="button ghost" type="button">Download report</button><button id="refreshPreflight" class="button" type="button">Refresh</button></div>
     </div>
+    ${isCurrent ? "" : `<div id="preflightRefreshStatus" class="message warn" role="status"><strong>Live check in progress.</strong> Showing the last completed report from ${esc(fmtDate(report.evaluated_at))}. Its findings may be stale; do not use this copy to decide whether SHOW can start.</div>`}
     <div class="stat-grid">
       <article class="stat"><span class="label">Runtime Snapshot</span><span class="value">${report.runtime_snapshot_id ? `v${esc(report.snapshot_version)}` : "Not Published"}</span><span class="sub mono">${esc(report.runtime_snapshot_id || "—")}</span></article>
       <article class="stat"><span class="label">Blocking checks</span><span class="value">${esc(blockers)}</span><span class="sub">SHOW requires zero blockers</span></article>
       <article class="stat"><span class="label">Warnings</span><span class="value">${esc(warnings)}</span><span class="sub">Warnings remain visible but do not block SHOW</span></article>
       <article class="stat"><span class="label">Evaluated</span><span class="value">${esc(fmtDate(report.evaluated_at))}</span><span class="sub">Live Hub state</span></article>
     </div>
-    <div class="section-title-row" style="margin-top:20px"><div><p class="eyebrow">CHECKS</p><h2>PASS / WARN / BLOCK</h2></div></div>
+    <div class="section-title-row" style="margin-top:20px"><div><p class="eyebrow">CHECKS</p><h2>${isCurrent ? "PASS / WARN / BLOCK" : "Previously evaluated checks"}</h2></div></div>
     <div class="grid cards">${preflightCheckRows(report)}</div>
     <div class="section-title-row" style="margin-top:20px"><div><p class="eyebrow">COMPANIONS</p><h2>Machine Role readiness</h2></div></div>
     <div class="grid cards">${preflightRoleRows(report)}</div>
@@ -191,9 +191,39 @@ async function renderPreflight() {
   bindPreflightFixButtons();
   el("exportPreflight").addEventListener("click", () => downloadPreflightReport(report));
   el("refreshPreflight").addEventListener("click", async () => {
+    const user = state.user;
+    const projectID = state.project?.project_id || "";
     try { await renderPreflight(); }
-    catch (error) { setMessage(globalMessage, errorMessage(error), "error"); }
+    catch (error) {
+      if (state.page === "preflight" && state.user === user && state.project?.project_id === projectID) {
+        setMessage(globalMessage, errorMessage(error), "error");
+      }
+    }
   });
+}
+
+async function renderPreflight() {
+  const user = state.user;
+  const projectID = state.project?.project_id || "";
+  const generation = state.preflightRenderGeneration = (state.preflightRenderGeneration || 0) + 1;
+  const cached = state.runtimePreflightProjectID === projectID && state.runtimePreflightUser === user
+    ? state.runtimePreflight : null;
+  if (cached && state.page === "preflight" && state.project?.project_id === projectID) {
+    renderPreflightReport(cached, false);
+  }
+  let report;
+  try { report = await loadPreflight(projectID); }
+  catch (error) {
+    if (state.preflightRenderGeneration === generation && state.page === "preflight" &&
+        state.user === user && state.project?.project_id === projectID) {
+      const status = el("preflightRefreshStatus");
+      if (status) status.textContent = "Live check failed. The last completed report remains stale; do not use it to decide whether SHOW can start.";
+    }
+    throw error;
+  }
+  if (state.preflightRenderGeneration !== generation || state.page !== "preflight" ||
+      state.user !== user || state.project?.project_id !== projectID) return;
+  renderPreflightReport(report, true);
 }
 
 navigate = async function stagecoreNavigate(page) {
@@ -201,15 +231,28 @@ navigate = async function stagecoreNavigate(page) {
   if (!state.project) return;
   setPage(page);
   setMessage(globalMessage, "");
+  renderPageLoading(page);
+  const user = state.user;
+  const projectID = state.project.project_id;
   try { await renderPreflight(); }
-  catch (error) { setMessage(globalMessage, errorMessage(error), "error"); }
+  catch (error) {
+    if (state.page === "preflight" && state.user === user && state.project?.project_id === projectID) {
+      setMessage(globalMessage, errorMessage(error), "error");
+    }
+  }
 };
 
 renderDashboard = async function stagecoreDashboard() {
+  const user = state.user;
+  const projectID = state.project?.project_id || "";
+  const generation = (state.dashboardRenderGeneration || 0) + 1;
   await stagecoreDashboardBase();
-  if (!state.project) return;
+  if (!projectID || state.dashboardRenderGeneration !== generation || state.page !== "dashboard" ||
+      state.user !== user || state.project?.project_id !== projectID) return;
   try {
-    const report = await loadPreflight();
+    const report = await loadPreflight(projectID);
+    if (state.dashboardRenderGeneration !== generation || state.page !== "dashboard" ||
+        state.user !== user || state.project?.project_id !== projectID) return;
     const summary = document.createElement("section");
     summary.className = "card";
     summary.style.marginTop = "16px";
@@ -223,6 +266,8 @@ renderDashboard = async function stagecoreDashboard() {
     content.appendChild(summary);
     el("dashboardPreflight").addEventListener("click", () => navigate("preflight"));
   } catch (error) {
+    if (state.dashboardRenderGeneration !== generation || state.page !== "dashboard" ||
+        state.user !== user || state.project?.project_id !== projectID) return;
     const summary = document.createElement("section");
     summary.className = "card";
     summary.style.marginTop = "16px";
