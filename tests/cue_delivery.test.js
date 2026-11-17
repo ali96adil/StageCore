@@ -7,21 +7,25 @@ const test = require("node:test");
 
 const app = fs.readFileSync("internal/operatorweb/static/app.js", "utf8");
 const dispatch = app.slice(app.indexOf("async function dispatchRuntimeCue("), app.indexOf("async function stopCueRuntime("));
+const runtimeRenderGuard = app.slice(app.indexOf("function runtimeRenderIsCurrent("), app.indexOf("async function renderRuntime("));
+const runtimeRenderer = app.slice(app.indexOf("async function renderRuntime("), app.indexOf("async function startRuntime("));
+const runtimePolling = app.slice(app.indexOf("function startRuntimePolling()"), app.indexOf("window.addEventListener("));
 
 function harness(api) {
   let id = 0;
-  let rendered = 0;
+  const renders = [];
   const ctx = {
     state: { page: "runtime", user: {}, project: { project_id: "project" } },
     api, requestID: () => String(++id),
-    renderRuntime: async () => { rendered++; },
+    renderRuntime: async (...args) => { renders.push(args); },
     errorMessage: (error) => error.message,
   };
   vm.runInNewContext(dispatch, ctx);
   return {
     state: ctx.state,
     send: (operation = "go", extra) => ctx.dispatchRuntimeCue("project", { session: { session_id: "exact-session" }, current_cue: { cue_id: "exact-cue" } }, operation, extra),
-    rendered: () => rendered,
+    rendered: () => renders.length,
+    renderCalls: () => renders,
   };
 }
 
@@ -52,6 +56,66 @@ test("a transport failure is unconfirmed and never automatically retries GO", as
   assert.equal(attempts, 1);
   assert.equal(h.state.runtimeCueReceipt.status, "UNCONFIRMED");
   assert.match(h.state.runtimeCueReceipt.message, /Session History/);
+});
+
+test("GO/JUMP refresh runtime without waiting for a preflight refresh", async () => {
+  const h = harness(async () => ({ result: { status: "ACCEPTED", payload: { cue_execution_id: "execution" } } }));
+  await h.send("go");
+  assert.equal(JSON.stringify(h.renderCalls()), JSON.stringify([[true, { refreshPreflight: false }]]));
+
+  const jump = harness(async () => ({ result: { status: "ACCEPTED", payload: { cue_execution_id: "jump-execution" } } }));
+  await jump.send("jump", { cue_id: "target", confirm: true });
+  assert.equal(JSON.stringify(jump.renderCalls()), JSON.stringify([[true, { refreshPreflight: false }]]));
+});
+
+test("stale runtime responses cannot replace the latest page or project state", () => {
+  const user = {};
+  const ctx = {
+    state: { runtimeRenderGeneration: 7, page: "runtime", user, project: { project_id: "project" } },
+  };
+  vm.runInNewContext(runtimeRenderGuard, ctx);
+  assert.equal(ctx.runtimeRenderIsCurrent(7, user, "project"), true);
+  assert.equal(ctx.runtimeRenderIsCurrent(6, user, "project"), false);
+  ctx.state.page = "projects";
+  assert.equal(ctx.runtimeRenderIsCurrent(7, user, "project"), false);
+  ctx.state.page = "runtime";
+  ctx.state.project.project_id = "another-project";
+  assert.equal(ctx.runtimeRenderIsCurrent(7, user, "project"), false);
+
+  assert.match(runtimeRenderer, /const renderGeneration = \+\+state\.runtimeRenderGeneration;/);
+  assert.match(runtimeRenderer, /if \(!runtimeRenderIsCurrent\(renderGeneration, user, projectID\)\) return;/);
+});
+
+test("runtime polling skips ticks while a slow refresh is still in flight", async () => {
+  const callbacks = [];
+  let resolveRefresh;
+  let renders = 0;
+  const ctx = {
+    state: { page: "runtime", runtimeTimer: null, runtimePollInFlight: false },
+    document: { hidden: false },
+    setInterval(callback, interval) {
+      assert.equal(interval, 1500);
+      callbacks.push(callback);
+      return 1;
+    },
+    clearInterval() {},
+    renderRuntime() {
+      renders++;
+      return new Promise((resolve) => { resolveRefresh = resolve; });
+    },
+  };
+  vm.runInNewContext(runtimePolling, ctx);
+  ctx.startRuntimePolling();
+  const tick = callbacks[0];
+  const first = tick();
+  await tick();
+  assert.equal(renders, 1);
+  resolveRefresh();
+  await first;
+  const third = tick();
+  assert.equal(renders, 2);
+  resolveRefresh();
+  await third;
 });
 
 test("a lost GO reply keeps execution history usable and late history replies cannot replace the selected trace", async () => {

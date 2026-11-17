@@ -11,6 +11,11 @@ const state = {
   currentRevision: null,
   validation: null,
   runtimeTimer: null,
+  runtimeRenderGeneration: 0,
+  runtimePollInFlight: false,
+  runtimePreflightProjectID: "",
+  runtimePreflightUser: null,
+  runtimePreflight: null,
   runtimeForceExitAvailable: false,
   showSessionActive: false,
 };
@@ -1343,14 +1348,33 @@ function runtimeActiveExecutionMarkup(runtime, cues) {
     </section>`;
 }
 
-async function renderRuntime(startPolling = false) {
+function runtimeRenderIsCurrent(generation, user, projectID) {
+  return state.runtimeRenderGeneration === generation &&
+    state.page === "runtime" && state.user === user &&
+    encodeURIComponent(state.project?.project_id || "") === projectID;
+}
+
+async function renderRuntime(startPolling = false, options = {}) {
   const user = state.user;
   const projectID = encodeURIComponent(state.project.project_id);
+  const renderGeneration = ++state.runtimeRenderGeneration;
+  const refreshPreflight = options.refreshPreflight !== false;
   const [runtime, preflight] = await Promise.all([
     api(`/api/v1/projects/${projectID}/runtime`),
-    api(`/api/v1/projects/${projectID}/preflight`).catch(() => null),
+    refreshPreflight
+      ? api(`/api/v1/projects/${projectID}/preflight`).catch(() => null)
+      : Promise.resolve(
+        state.runtimePreflightProjectID === projectID && state.runtimePreflightUser === user
+          ? state.runtimePreflight
+          : null,
+      ),
   ]);
-  if (state.page !== "runtime" || state.user !== user || encodeURIComponent(state.project?.project_id || "") !== projectID) return;
+  if (!runtimeRenderIsCurrent(renderGeneration, user, projectID)) return;
+  if (refreshPreflight) {
+    state.runtimePreflightProjectID = projectID;
+    state.runtimePreflightUser = user;
+    state.runtimePreflight = preflight;
+  }
   const active = runtime.session;
   setShowSessionPresentation(active?.type === "SHOW" || runtime.mode === "SHOW");
   const ended = state.runtimeEndedRehearsal;
@@ -1611,7 +1635,7 @@ async function dispatchRuntimeCue(projectID, runtime, operation, extra = {}) {
       "Delivery unconfirmed. Check Session History before sending another command.";
   }
   if (!matches() || state.runtimeCueReceipt !== receipt || state.page !== "runtime") return;
-  try { await renderRuntime(true); }
+  try { await renderRuntime(true, { refreshPreflight: false }); }
   catch (error) { setMessage(globalMessage, errorMessage(error), "error"); }
 }
 
@@ -1759,7 +1783,10 @@ function startRuntimePolling() {
   stopRuntimePolling();
   state.runtimeTimer = setInterval(async () => {
     if (state.page !== "runtime" || document.hidden) return;
+    if (state.runtimePollInFlight) return;
+    state.runtimePollInFlight = true;
     try { await renderRuntime(false); } catch (_) {}
+    finally { state.runtimePollInFlight = false; }
   }, 1500);
 }
 
